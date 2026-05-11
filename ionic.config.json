@@ -1,0 +1,7 @@
+{
+  "name": "finmate",
+  "integrations": {
+    "capacitor": {}
+  },
+  "type": "angular"
+}

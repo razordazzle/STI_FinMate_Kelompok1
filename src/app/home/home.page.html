@@ -1,0 +1,666 @@
+<ion-header>
+  <ion-toolbar>
+    <ion-title>FinMate</ion-title>
+    <ion-buttons slot="end" *ngIf="currentUser as user">
+      <ion-button fill="clear">
+        <ion-icon slot="start" name="person-circle-outline"></ion-icon>
+        {{ user.name }}
+      </ion-button>
+      <ion-button color="medium" (click)="logout()" aria-label="Logout">
+        <ion-icon slot="icon-only" name="log-out-outline"></ion-icon>
+      </ion-button>
+    </ion-buttons>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content [fullscreen]="true">
+  <ng-container *ngIf="currentUser; else authScreen">
+    <main class="app-shell">
+      <section class="top-strip">
+        <div>
+          <p class="eyebrow">Money Manager</p>
+          <h1>FinMate</h1>
+        </div>
+        <div class="balance-box">
+          <span>Total saldo</span>
+          <strong>{{ formatCurrency(totalBalance()) }}</strong>
+        </div>
+      </section>
+
+      <ion-segment [(ngModel)]="selectedSection" scrollable="true" class="main-tabs">
+        <ion-segment-button *ngFor="let section of sections" [value]="section.key">
+          <ion-icon [name]="section.icon"></ion-icon>
+          <ion-label>{{ section.label }}</ion-label>
+        </ion-segment-button>
+      </ion-segment>
+
+      <ion-note *ngIf="notice" [color]="noticeTone" class="notice">
+        {{ notice }}
+      </ion-note>
+
+      <ng-container [ngSwitch]="selectedSection">
+        <section *ngSwitchCase="'dashboard'" class="content-grid">
+          <div class="metric-grid">
+            <article class="metric">
+              <span>Income periode</span>
+              <strong>{{ formatCurrency(report?.totalIncome || 0) }}</strong>
+            </article>
+            <article class="metric">
+              <span>Expense periode</span>
+              <strong>{{ formatCurrency(report?.totalExpense || 0) }}</strong>
+            </article>
+            <article class="metric">
+              <span>Cashflow</span>
+              <strong>{{ formatCurrency(report?.netCashflow || 0) }}</strong>
+            </article>
+            <article class="metric">
+              <span>Kategori terbesar</span>
+              <strong>{{ report?.largestExpenseCategory || '-' }}</strong>
+            </article>
+          </div>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Akun Finansial</h2>
+              <ion-button size="small" fill="clear" (click)="selectedSection = 'accounts'">
+                <ion-icon slot="icon-only" name="add-circle-outline"></ion-icon>
+              </ion-button>
+            </div>
+            <ion-list lines="none" *ngIf="data.accounts.length > 0; else noAccounts">
+              <ion-item *ngFor="let account of data.accounts; trackBy: trackById">
+                <ion-icon slot="start" name="wallet-outline"></ion-icon>
+                <ion-label>
+                  <h3>{{ account.name }}</h3>
+                  <p>{{ account.type }}</p>
+                </ion-label>
+                <ion-text slot="end">{{ formatCurrency(account.balance) }}</ion-text>
+              </ion-item>
+            </ion-list>
+          </section>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Budget Bulan Ini</h2>
+              <ion-button size="small" fill="clear" (click)="selectedSection = 'budget'">
+                <ion-icon slot="icon-only" name="speedometer-outline"></ion-icon>
+              </ion-button>
+            </div>
+            <div class="budget-list" *ngIf="budgetSummaries.length > 0; else noBudgets">
+              <article class="budget-row" *ngFor="let summary of budgetSummaries; trackBy: trackById">
+                <div>
+                  <strong>{{ summary.category }}</strong>
+                  <span>{{ budgetStatusLabel(summary) }}</span>
+                </div>
+                <ion-progress-bar [value]="summary.percentage > 100 ? 1 : summary.percentage / 100" [color]="budgetColor(summary.status)"></ion-progress-bar>
+                <small>{{ formatCurrency(summary.spent) }} / {{ formatCurrency(summary.limit) }}</small>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel panel-wide">
+            <div class="panel-heading">
+              <h2>Transaksi Terbaru</h2>
+              <ion-button size="small" fill="clear" (click)="selectedSection = 'transactions'">
+                <ion-icon slot="icon-only" name="add-outline"></ion-icon>
+              </ion-button>
+            </div>
+            <ion-list lines="full" *ngIf="data.transactions.length > 0; else noTransactions">
+              <ion-item *ngFor="let transaction of data.transactions | slice: 0 : 6; trackBy: trackById">
+                <ion-icon
+                  slot="start"
+                  [name]="transaction.type === 'income' ? 'arrow-down-circle-outline' : transaction.type === 'expense' ? 'arrow-up-circle-outline' : 'swap-horizontal-outline'"
+                ></ion-icon>
+                <ion-label>
+                  <h3>{{ transactionTitle(transaction) }}</h3>
+                  <p>{{ transaction.date }} · {{ transaction.note || transaction.category }}</p>
+                </ion-label>
+                <ion-text slot="end" [color]="transaction.type === 'income' ? 'success' : 'danger'">
+                  {{ transactionAmount(transaction) }}
+                </ion-text>
+              </ion-item>
+            </ion-list>
+          </section>
+        </section>
+
+        <section *ngSwitchCase="'accounts'" class="content-grid two-columns">
+          <form class="panel" (ngSubmit)="addAccount()">
+            <div class="panel-heading">
+              <h2>Tambah Akun</h2>
+            </div>
+            <ion-list lines="full">
+              <ion-item>
+                <ion-label position="stacked">Nama akun</ion-label>
+                <ion-input name="accountName" [(ngModel)]="accountForm.name" placeholder="Cash, BCA, DANA"></ion-input>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Tipe</ion-label>
+                <ion-select name="accountType" [(ngModel)]="accountForm.type">
+                  <ion-select-option *ngFor="let type of accountTypes" [value]="type">{{ type }}</ion-select-option>
+                </ion-select>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Initial balance</ion-label>
+                <ion-input name="initialBalance" type="number" inputmode="decimal" [(ngModel)]="accountForm.initialBalance"></ion-input>
+              </ion-item>
+            </ion-list>
+            <ion-button expand="block" type="submit">
+              <ion-icon slot="start" name="save-outline"></ion-icon>
+              Simpan Akun
+            </ion-button>
+          </form>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Daftar Akun</h2>
+            </div>
+            <ion-list lines="full" *ngIf="data.accounts.length > 0; else noAccounts">
+              <ion-item *ngFor="let account of data.accounts; trackBy: trackById">
+                <ion-icon slot="start" name="card-outline"></ion-icon>
+                <ion-label>
+                  <h3>{{ account.name }}</h3>
+                  <p>{{ account.type }}</p>
+                </ion-label>
+                <ion-text slot="end">{{ formatCurrency(account.balance) }}</ion-text>
+              </ion-item>
+            </ion-list>
+          </section>
+        </section>
+
+        <section *ngSwitchCase="'transactions'" class="content-grid two-columns">
+          <form class="panel" (ngSubmit)="addTransaction()">
+            <div class="panel-heading">
+              <h2>Income / Expense</h2>
+            </div>
+            <ion-list lines="full">
+              <ion-item>
+                <ion-label position="stacked">Jenis</ion-label>
+                <ion-select name="transactionType" [(ngModel)]="transactionForm.type" (ionChange)="onTransactionTypeChange()">
+                  <ion-select-option value="income">Income</ion-select-option>
+                  <ion-select-option value="expense">Expense</ion-select-option>
+                </ion-select>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Akun</ion-label>
+                <ion-select name="transactionAccount" [(ngModel)]="transactionForm.accountId">
+                  <ion-select-option *ngFor="let account of data.accounts" [value]="account.id">{{ account.name }}</ion-select-option>
+                </ion-select>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Kategori</ion-label>
+                <ion-select name="transactionCategory" [(ngModel)]="transactionForm.category">
+                  <ion-select-option *ngFor="let category of transactionCategories" [value]="category">
+                    {{ category }}
+                  </ion-select-option>
+                </ion-select>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Nominal</ion-label>
+                <ion-input name="transactionAmount" type="number" inputmode="decimal" [(ngModel)]="transactionForm.amount"></ion-input>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Tanggal</ion-label>
+                <ion-input name="transactionDate" type="date" [(ngModel)]="transactionForm.date"></ion-input>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Catatan</ion-label>
+                <ion-input name="transactionNote" [(ngModel)]="transactionForm.note"></ion-input>
+              </ion-item>
+            </ion-list>
+            <ion-button expand="block" type="submit">
+              <ion-icon slot="start" name="add-circle-outline"></ion-icon>
+              Tambah Transaksi
+            </ion-button>
+          </form>
+
+          <form class="panel" (ngSubmit)="transfer()">
+            <div class="panel-heading">
+              <h2>Transfer Antar Akun</h2>
+            </div>
+            <ion-list lines="full">
+              <ion-item>
+                <ion-label position="stacked">Dari</ion-label>
+                <ion-select name="fromAccount" [(ngModel)]="transferForm.fromAccountId">
+                  <ion-select-option *ngFor="let account of data.accounts" [value]="account.id">{{ account.name }}</ion-select-option>
+                </ion-select>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Ke</ion-label>
+                <ion-select name="toAccount" [(ngModel)]="transferForm.toAccountId">
+                  <ion-select-option *ngFor="let account of data.accounts" [value]="account.id">{{ account.name }}</ion-select-option>
+                </ion-select>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Nominal</ion-label>
+                <ion-input name="transferAmount" type="number" inputmode="decimal" [(ngModel)]="transferForm.amount"></ion-input>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Biaya admin</ion-label>
+                <ion-input name="transferFee" type="number" inputmode="decimal" [(ngModel)]="transferForm.fee"></ion-input>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Tanggal</ion-label>
+                <ion-input name="transferDate" type="date" [(ngModel)]="transferForm.date"></ion-input>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Catatan</ion-label>
+                <ion-input name="transferNote" [(ngModel)]="transferForm.note"></ion-input>
+              </ion-item>
+            </ion-list>
+            <ion-button expand="block" type="submit" color="tertiary">
+              <ion-icon slot="start" name="swap-horizontal-outline"></ion-icon>
+              Catat Transfer
+            </ion-button>
+          </form>
+
+          <section class="panel panel-wide">
+            <div class="panel-heading">
+              <h2>Riwayat</h2>
+            </div>
+            <ion-list lines="full" *ngIf="data.transactions.length > 0; else noTransactions">
+              <ion-item *ngFor="let transaction of data.transactions; trackBy: trackById">
+                <ion-label>
+                  <h3>{{ transactionTitle(transaction) }}</h3>
+                  <p>{{ transaction.type }} · {{ transaction.category }} · {{ transaction.date }}</p>
+                </ion-label>
+                <ion-text slot="end" [color]="transaction.type === 'income' ? 'success' : 'danger'">
+                  {{ transactionAmount(transaction) }}
+                </ion-text>
+              </ion-item>
+            </ion-list>
+          </section>
+        </section>
+
+        <section *ngSwitchCase="'budget'" class="content-grid two-columns">
+          <form class="panel" (ngSubmit)="saveBudget()">
+            <div class="panel-heading">
+              <h2>Budget Kategori</h2>
+            </div>
+            <ion-list lines="full">
+              <ion-item>
+                <ion-label position="stacked">Kategori</ion-label>
+                <ion-select name="budgetCategory" [(ngModel)]="budgetForm.category">
+                  <ion-select-option *ngFor="let category of expenseCategories" [value]="category">{{ category }}</ion-select-option>
+                </ion-select>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Bulan</ion-label>
+                <ion-input name="budgetMonth" type="month" [(ngModel)]="budgetForm.month" (ionChange)="refreshBudgetPeriod()"></ion-input>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Limit</ion-label>
+                <ion-input name="budgetLimit" type="number" inputmode="decimal" [(ngModel)]="budgetForm.limit"></ion-input>
+              </ion-item>
+            </ion-list>
+            <ion-button expand="block" type="submit">
+              <ion-icon slot="start" name="speedometer-outline"></ion-icon>
+              Simpan Budget
+            </ion-button>
+          </form>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Status Budget</h2>
+            </div>
+            <div class="budget-list" *ngIf="budgetSummaries.length > 0; else noBudgets">
+              <article class="budget-row" *ngFor="let summary of budgetSummaries; trackBy: trackById">
+                <div>
+                  <strong>{{ summary.category }}</strong>
+                  <span>{{ budgetStatusLabel(summary) }}</span>
+                </div>
+                <ion-progress-bar [value]="summary.percentage > 100 ? 1 : summary.percentage / 100" [color]="budgetColor(summary.status)"></ion-progress-bar>
+                <small>Sisa {{ formatCurrency(summary.remaining) }}</small>
+              </article>
+            </div>
+          </section>
+        </section>
+
+        <section *ngSwitchCase="'recurring'" class="content-grid two-columns">
+          <form class="panel" (ngSubmit)="addRecurring()">
+            <div class="panel-heading">
+              <h2>Recurring Transaction</h2>
+              <ion-button size="small" fill="clear" type="button" (click)="generateRecurringToday()">
+                <ion-icon slot="icon-only" name="play-forward-outline"></ion-icon>
+              </ion-button>
+            </div>
+            <ion-list lines="full">
+              <ion-item>
+                <ion-label position="stacked">Nama</ion-label>
+                <ion-input name="recurringName" [(ngModel)]="recurringForm.name" placeholder="Spotify, Gaji, Kos"></ion-input>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Jenis</ion-label>
+                <ion-select name="recurringType" [(ngModel)]="recurringForm.type" (ionChange)="onRecurringTypeChange()">
+                  <ion-select-option value="income">Income</ion-select-option>
+                  <ion-select-option value="expense">Expense</ion-select-option>
+                </ion-select>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Akun</ion-label>
+                <ion-select name="recurringAccount" [(ngModel)]="recurringForm.accountId">
+                  <ion-select-option *ngFor="let account of data.accounts" [value]="account.id">{{ account.name }}</ion-select-option>
+                </ion-select>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Kategori</ion-label>
+                <ion-select name="recurringCategory" [(ngModel)]="recurringForm.category">
+                  <ion-select-option *ngFor="let category of recurringCategories" [value]="category">
+                    {{ category }}
+                  </ion-select-option>
+                </ion-select>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Nominal</ion-label>
+                <ion-input name="recurringAmount" type="number" inputmode="decimal" [(ngModel)]="recurringForm.amount"></ion-input>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Tanggal tiap bulan</ion-label>
+                <ion-input name="recurringDay" type="number" min="1" max="31" [(ngModel)]="recurringForm.dayOfMonth"></ion-input>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Mulai</ion-label>
+                <ion-input name="recurringStart" type="date" [(ngModel)]="recurringForm.startsOn"></ion-input>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Selesai</ion-label>
+                <ion-input name="recurringEnd" type="date" [(ngModel)]="recurringForm.endsOn"></ion-input>
+              </ion-item>
+              <ion-item>
+                <ion-toggle name="recurringActive" [(ngModel)]="recurringForm.active">Aktif</ion-toggle>
+              </ion-item>
+            </ion-list>
+            <ion-button expand="block" type="submit">
+              <ion-icon slot="start" name="repeat-outline"></ion-icon>
+              Simpan Recurring
+            </ion-button>
+          </form>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Daftar Recurring</h2>
+            </div>
+            <ion-list lines="full" *ngIf="data.recurringRules.length > 0; else noRecurring">
+              <ion-item *ngFor="let rule of data.recurringRules; trackBy: trackById">
+                <ion-label>
+                  <h3>{{ rule.name }}</h3>
+                  <p>{{ recurringAccount(rule) }} · {{ rule.category }} · tanggal {{ rule.dayOfMonth }}</p>
+                </ion-label>
+                <ion-text slot="end">{{ formatCurrency(rule.amount) }}</ion-text>
+                <ion-toggle slot="end" [checked]="rule.active" (ionChange)="toggleRecurring(rule.id, $any($event).detail.checked)"></ion-toggle>
+              </ion-item>
+            </ion-list>
+          </section>
+        </section>
+
+        <section *ngSwitchCase="'debts'" class="content-grid two-columns">
+          <form class="panel" (ngSubmit)="addDebt()">
+            <div class="panel-heading">
+              <h2>Hutang / Piutang</h2>
+            </div>
+            <ion-list lines="full">
+              <ion-item>
+                <ion-label position="stacked">Jenis</ion-label>
+                <ion-select name="debtKind" [(ngModel)]="debtForm.kind">
+                  <ion-select-option value="debt">Hutang</ion-select-option>
+                  <ion-select-option value="receivable">Piutang</ion-select-option>
+                </ion-select>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Nama</ion-label>
+                <ion-input name="debtPerson" [(ngModel)]="debtForm.person"></ion-input>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Nominal</ion-label>
+                <ion-input name="debtAmount" type="number" inputmode="decimal" [(ngModel)]="debtForm.amount"></ion-input>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Jatuh tempo</ion-label>
+                <ion-input name="debtDue" type="date" [(ngModel)]="debtForm.dueDate"></ion-input>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Catatan</ion-label>
+                <ion-input name="debtNote" [(ngModel)]="debtForm.note"></ion-input>
+              </ion-item>
+            </ion-list>
+            <ion-button expand="block" type="submit">
+              <ion-icon slot="start" name="receipt-outline"></ion-icon>
+              Simpan Data
+            </ion-button>
+          </form>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Status Pembayaran</h2>
+            </div>
+            <ion-list lines="full" *ngIf="data.debts.length > 0; else noDebts">
+              <ion-item *ngFor="let debt of data.debts; trackBy: trackById" class="debt-item">
+                <ion-label>
+                  <h3>{{ debt.person }}</h3>
+                  <p>{{ debt.kind === 'debt' ? 'Hutang' : 'Piutang' }} · {{ debt.dueDate }} · {{ debtLabel(debt) }}</p>
+                  <small>{{ formatCurrency(debt.paidAmount) }} / {{ formatCurrency(debt.amount) }}</small>
+                  <div class="payment-row" *ngIf="debt.status !== 'paid'">
+                    <ion-input type="number" inputmode="decimal" [(ngModel)]="paymentForms[debt.id]" name="payment-{{ debt.id }}" placeholder="Bayar"></ion-input>
+                    <ion-button size="small" (click)="payDebt(debt.id)">
+                      <ion-icon slot="icon-only" name="checkmark-outline"></ion-icon>
+                    </ion-button>
+                  </div>
+                </ion-label>
+                <ion-badge slot="end" [color]="debtColor(debt)">{{ debtLabel(debt) }}</ion-badge>
+              </ion-item>
+            </ion-list>
+          </section>
+        </section>
+
+        <section *ngSwitchCase="'reports'" class="content-grid">
+          <form class="panel panel-wide report-filter" (ngSubmit)="runReport()">
+            <div class="panel-heading">
+              <h2>Laporan Keuangan</h2>
+            </div>
+            <ion-list lines="full">
+              <ion-item>
+                <ion-label position="stacked">Start date</ion-label>
+                <ion-input name="reportStart" type="date" [(ngModel)]="reportFilter.startDate"></ion-input>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">End date</ion-label>
+                <ion-input name="reportEnd" type="date" [(ngModel)]="reportFilter.endDate"></ion-input>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Akun</ion-label>
+                <ion-select name="reportAccount" [(ngModel)]="reportFilter.accountId">
+                  <ion-select-option value="all">Semua akun</ion-select-option>
+                  <ion-select-option *ngFor="let account of data.accounts" [value]="account.id">{{ account.name }}</ion-select-option>
+                </ion-select>
+              </ion-item>
+              <ion-item>
+                <ion-label position="stacked">Kategori</ion-label>
+                <ion-select name="reportCategory" [(ngModel)]="reportFilter.category">
+                  <ion-select-option value="all">Semua kategori</ion-select-option>
+                  <ion-select-option *ngFor="let category of expenseCategories" [value]="category">{{ category }}</ion-select-option>
+                  <ion-select-option *ngFor="let category of incomeCategories" [value]="category">{{ category }}</ion-select-option>
+                  <ion-select-option value="Transfer">Transfer</ion-select-option>
+                </ion-select>
+              </ion-item>
+            </ion-list>
+            <ion-button expand="block" type="submit">
+              <ion-icon slot="start" name="bar-chart-outline"></ion-icon>
+              Tampilkan Laporan
+            </ion-button>
+          </form>
+
+          <ng-container *ngIf="report as reportData">
+            <div class="metric-grid panel-wide">
+              <article class="metric">
+                <span>Total income</span>
+                <strong>{{ formatCurrency(reportData.totalIncome) }}</strong>
+              </article>
+              <article class="metric">
+                <span>Total expense</span>
+                <strong>{{ formatCurrency(reportData.totalExpense) }}</strong>
+              </article>
+              <article class="metric">
+                <span>Selisih</span>
+                <strong>{{ formatCurrency(reportData.netCashflow) }}</strong>
+              </article>
+              <article class="metric">
+                <span>Transaksi</span>
+                <strong>{{ reportData.transactions.length }}</strong>
+              </article>
+            </div>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <h2>Grafik Harian</h2>
+              </div>
+              <div class="chart" *ngIf="reportData.dailyTotals.length > 0; else noReportData">
+                <div class="chart-column" *ngFor="let day of reportData.dailyTotals">
+                  <div class="bars">
+                    <span class="bar income" [style.height.%]="dailyBarHeight(day.income)"></span>
+                    <span class="bar expense" [style.height.%]="dailyBarHeight(day.expense)"></span>
+                  </div>
+                  <small>{{ day.date.slice(5) }}</small>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <h2>Kategori Expense</h2>
+              </div>
+              <ion-list lines="full" *ngIf="reportData.categoryTotals.length > 0; else noReportData">
+                <ion-item *ngFor="let category of reportData.categoryTotals">
+                  <ion-label>{{ category.category }}</ion-label>
+                  <ion-text slot="end">{{ formatCurrency(category.total) }}</ion-text>
+                </ion-item>
+              </ion-list>
+            </section>
+          </ng-container>
+        </section>
+
+        <section *ngSwitchCase="'csv'" class="content-grid two-columns">
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Export CSV</h2>
+            </div>
+            <ion-button expand="block" (click)="exportCsv()">
+              <ion-icon slot="start" name="download-outline"></ion-icon>
+              Export Transaksi
+            </ion-button>
+            <p class="muted">Format: type,date,account,fromAccount,toAccount,category,amount,fee,note</p>
+          </section>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Import CSV</h2>
+            </div>
+            <input class="file-input" type="file" accept=".csv,text/csv" (change)="importCsv($event)" />
+            <div class="import-result" *ngIf="lastImport as importResult">
+              <ion-badge color="success">Imported {{ importResult.imported }}</ion-badge>
+              <ion-badge color="medium">Skipped {{ importResult.skipped }}</ion-badge>
+              <ion-list lines="none" *ngIf="importResult.errors.length > 0">
+                <ion-item *ngFor="let error of importResult.errors">
+                  <ion-icon slot="start" color="danger" name="alert-circle-outline"></ion-icon>
+                  <ion-label>{{ error }}</ion-label>
+                </ion-item>
+              </ion-list>
+            </div>
+          </section>
+        </section>
+      </ng-container>
+    </main>
+  </ng-container>
+</ion-content>
+
+<ng-template #authScreen>
+  <main class="auth-shell">
+    <section class="auth-brand">
+      <p class="eyebrow">FinMate</p>
+      <h1>Kelola saldo, transaksi, budget, dan hutang piutang dalam satu aplikasi.</h1>
+      <div class="auth-stats">
+        <span>Hybrid Mobile</span>
+        <span>Ionic Angular</span>
+        <span>CSV Ready</span>
+      </div>
+    </section>
+
+    <section class="panel auth-panel">
+      <ion-segment [(ngModel)]="authMode">
+        <ion-segment-button value="login">
+          <ion-label>Login</ion-label>
+        </ion-segment-button>
+        <ion-segment-button value="register">
+          <ion-label>Register</ion-label>
+        </ion-segment-button>
+      </ion-segment>
+
+      <ion-note *ngIf="notice" [color]="noticeTone" class="notice">
+        {{ notice }}
+      </ion-note>
+
+      <form *ngIf="authMode === 'login'" (ngSubmit)="submitLogin()">
+        <ion-list lines="full">
+          <ion-item>
+            <ion-label position="stacked">Email</ion-label>
+            <ion-input name="loginEmail" type="email" [(ngModel)]="loginForm.email"></ion-input>
+          </ion-item>
+          <ion-item>
+            <ion-label position="stacked">Password</ion-label>
+            <ion-input name="loginPassword" type="password" [(ngModel)]="loginForm.password"></ion-input>
+          </ion-item>
+        </ion-list>
+        <ion-button expand="block" type="submit">
+          <ion-icon slot="start" name="log-in-outline"></ion-icon>
+          Login
+        </ion-button>
+        <ion-button expand="block" fill="clear" type="button" (click)="loginDemo()">
+          <ion-icon slot="start" name="flash-outline"></ion-icon>
+          Demo
+        </ion-button>
+      </form>
+
+      <form *ngIf="authMode === 'register'" (ngSubmit)="submitRegister()">
+        <ion-list lines="full">
+          <ion-item>
+            <ion-label position="stacked">Name</ion-label>
+            <ion-input name="registerName" [(ngModel)]="registerForm.name"></ion-input>
+          </ion-item>
+          <ion-item>
+            <ion-label position="stacked">Email</ion-label>
+            <ion-input name="registerEmail" type="email" [(ngModel)]="registerForm.email"></ion-input>
+          </ion-item>
+          <ion-item>
+            <ion-label position="stacked">Password</ion-label>
+            <ion-input name="registerPassword" type="password" [(ngModel)]="registerForm.password"></ion-input>
+          </ion-item>
+        </ion-list>
+        <ion-button expand="block" type="submit">
+          <ion-icon slot="start" name="person-add-outline"></ion-icon>
+          Register
+        </ion-button>
+      </form>
+    </section>
+  </main>
+</ng-template>
+
+<ng-template #noAccounts>
+  <p class="empty-state">Belum ada akun.</p>
+</ng-template>
+
+<ng-template #noBudgets>
+  <p class="empty-state">Belum ada budget untuk periode ini.</p>
+</ng-template>
+
+<ng-template #noTransactions>
+  <p class="empty-state">Belum ada transaksi.</p>
+</ng-template>
+
+<ng-template #noRecurring>
+  <p class="empty-state">Belum ada recurring transaction.</p>
+</ng-template>
+
+<ng-template #noDebts>
+  <p class="empty-state">Belum ada hutang/piutang.</p>
+</ng-template>
+
+<ng-template #noReportData>
+  <p class="empty-state">Tidak ada data pada filter ini.</p>
+</ng-template>
