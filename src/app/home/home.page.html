@@ -34,9 +34,9 @@
         </ion-segment-button>
       </ion-segment>
 
-      <ion-note *ngIf="notice" [color]="noticeTone" class="notice">
+      <!-- <ion-note *ngIf="notice" [color]="noticeTone" class="notice">
         {{ notice }}
-      </ion-note>
+      </ion-note> -->
 
       <ng-container [ngSwitch]="selectedSection">
         <section *ngSwitchCase="'dashboard'" class="content-grid">
@@ -596,7 +596,7 @@
         {{ notice }}
       </ion-note>
 
-      <form *ngIf="authMode === 'login'" (ngSubmit)="submitLogin()">
+      <form *ngIf="authMode === 'login'" (ngSubmit)="submitLogin2()">
         <ion-list lines="full">
           <ion-item>
             <ion-label position="stacked">Email</ion-label>
@@ -611,13 +611,10 @@
           <ion-icon slot="start" name="log-in-outline"></ion-icon>
           Login
         </ion-button>
-        <ion-button expand="block" fill="clear" type="button" (click)="loginDemo()">
-          <ion-icon slot="start" name="flash-outline"></ion-icon>
-          Demo
-        </ion-button>
+
       </form>
 
-      <form *ngIf="authMode === 'register'" (ngSubmit)="submitRegister()">
+      <form *ngIf="authMode === 'register'" (ngSubmit)="submitRegister2()">
         <ion-list lines="full">
           <ion-item>
             <ion-label position="stacked">Name</ion-label>

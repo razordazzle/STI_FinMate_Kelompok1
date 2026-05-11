@@ -18,6 +18,7 @@ import {
   createEmptyFinmateData,
   todayIso,
 } from '../services/finmate-store.service';
+import { SupabaseService } from '../services/supabase.service';
 
 type AuthMode = 'login' | 'register';
 type SectionKey = 'dashboard' | 'accounts' | 'transactions' | 'budget' | 'recurring' | 'debts' | 'reports' | 'csv';
@@ -29,6 +30,7 @@ interface SectionItem {
   icon: string;
 }
 
+
 @Component({
   selector: 'app-home',
   templateUrl: 'home.page.html',
@@ -36,6 +38,8 @@ interface SectionItem {
   standalone: false,
 })
 export class HomePage implements OnInit {
+  isAppInitializing = true;
+  
   readonly accountTypes: readonly AccountType[] = ACCOUNT_TYPES;
   readonly incomeCategories: readonly string[] = INCOME_CATEGORIES;
   readonly expenseCategories: readonly string[] = EXPENSE_CATEGORIES;
@@ -133,7 +137,7 @@ export class HomePage implements OnInit {
     category: 'all',
   };
 
-  constructor(private readonly store: FinmateStoreService) {}
+  constructor(private readonly store: FinmateStoreService, private readonly supabaseService: SupabaseService) {}
 
   get transactionCategories(): readonly string[] {
     return this.transactionForm.type === 'income' ? this.incomeCategories : this.expenseCategories;
@@ -143,7 +147,15 @@ export class HomePage implements OnInit {
     return this.recurringForm.type === 'income' ? this.incomeCategories : this.expenseCategories;
   }
 
-  ngOnInit(): void {
+  async ngOnInit(): Promise<void> {
+    this.isAppInitializing = true; 
+
+    await this.restoreSession();
+
+    if (this.currentUser) {
+      await this.fetchAccountsFromSupabase();
+    }
+
     const recurring = this.store.generateDueTransactions(this.today);
     this.refresh();
     this.runReport(false);
@@ -151,37 +163,128 @@ export class HomePage implements OnInit {
     if (recurring.ok && recurring.data && recurring.data.created.length > 0) {
       this.showNotice(recurring.message, recurring.warnings && recurring.warnings.length > 0 ? 'warning' : 'success', recurring.warnings);
     }
+
+    this.isAppInitializing = false;
   }
 
-  submitLogin(): void {
-    const result = this.store.login(this.loginForm.email, this.loginForm.password);
-    this.handleResult(result.ok, result.message, result.warnings);
-    if (result.ok) {
-      this.refresh();
-      this.runReport(false);
+async fetchAccountsFromSupabase() {
+  if (!this.currentUser || !this.currentUser.id) return;
+
+  try {
+    const { data, error } = await this.supabaseService.getAccounts(this.currentUser.id);
+
+    if (error) throw error;
+
+    if (data) {
+      this.data.accounts = data.map(acc => ({
+        id: acc.id,
+        name: acc.name,
+        type: acc.type as AccountType,
+        balance: Number(acc.balance), 
+        createdAt: acc.created_at,    
+        userId: acc.user_id           
+      } as Account)); 
+      
+      console.log('Akun berhasil diambil:', this.data.accounts);
     }
+  } catch (error: any) {
+    this.showNotice('Gagal mengambil data akun', 'danger');
+    console.error(error);
   }
+}
 
-  submitRegister(): void {
-    const result = this.store.register(this.registerForm.name, this.registerForm.email, this.registerForm.password);
-    this.handleResult(result.ok, result.message, result.warnings);
-    if (result.ok) {
+  async submitRegister2(): Promise<void> {
+    const { name, email, password } = this.registerForm;
+
+    if (!name || !email || !password) {
+      this.showNotice('Semua kolom wajib diisi!', 'warning');
+      return;
+    }
+
+    try {
+      const {data, error } = await this.supabaseService.signUpManual(email, name, password);
+
+      if (error) throw error;
+
+      this.showNotice('Registrasi berhasil! Silakan login.', 'success');
       this.registerForm = { name: '', email: '', password: '' };
-      this.refresh();
-      this.runReport(false);
+      this.authMode = 'login';
+      
+    } catch (error: any) {
+      this.showNotice(error.message || 'Gagal mendaftar.', 'danger');
     }
   }
 
-  loginDemo(): void {
-    const result = this.store.loginDemo();
-    this.handleResult(result.ok, result.message, result.warnings);
-    if (result.ok) {
+  async submitLogin2(): Promise<void> {
+    const { email, password } = this.loginForm;
+
+    try {
+      const { data, error } = await this.supabaseService.signInManual(email, password);
+
+      if (error || !data) {
+        throw new Error('Email atau Password salah!');
+      }
+
+      localStorage.setItem('session_user_id', data.id);
+      this.currentUser = data;
+
+      this.showNotice(`Selamat datang, ${data.name}!`, 'success');
+      await this.fetchAccountsFromSupabase();
       this.refresh();
-      this.runReport(false);
+      
+    } catch (error: any) {
+      this.showNotice(error.message, 'danger');
+    }
+  }
+
+
+  private refresh(): void {
+  const localData = this.store.getCurrentData();
+  
+  this.data.transactions = localData.transactions;
+  this.data.recurringRules = localData.recurringRules;
+  this.data.debts = localData.debts;
+
+  this.budgetSummaries = this.store.getBudgetSummaries(this.budgetForm.month);
+
+  if (this.data.accounts && this.data.accounts.length > 0) {
+    if (!this.transactionForm.accountId) {
+      this.transactionForm.accountId = this.data.accounts[0].id;
+    }
+    if (!this.transferForm.fromAccountId) {
+      this.transferForm.fromAccountId = this.data.accounts[0].id;
+    }
+    if (!this.transferForm.toAccountId && this.data.accounts.length > 1) {
+      this.transferForm.toAccountId = this.data.accounts[1].id;
+    }
+    if (!this.recurringForm.accountId) {
+      this.recurringForm.accountId = this.data.accounts[0].id;
+    }
+  }
+}
+  
+  async restoreSession() {
+    const userId = localStorage.getItem('session_user_id');
+    
+    if (userId) {
+      try {
+        const { data, error } = await this.supabaseService.getProfileById(userId);
+
+        if (data && !error) {
+          this.currentUser = data; 
+          console.log('Sesi dipulihkan, currentUser:', this.currentUser);
+        } else {
+          localStorage.removeItem('session_user_id'); 
+        }
+      } catch (err) {
+        console.error('Gagal memulihkan sesi', err);
+        localStorage.removeItem('session_user_id');
+      }
     }
   }
 
   logout(): void {
+    localStorage.removeItem('session_user_id'); 
     this.store.logout();
     this.currentUser = null;
     this.data = createEmptyFinmateData();
@@ -189,14 +292,46 @@ export class HomePage implements OnInit {
     this.showNotice('Logout berhasil.', 'medium');
   }
 
-  addAccount(): void {
-    const result = this.store.addAccount(this.accountForm);
-    this.handleResult(result.ok, result.message, result.warnings);
-    if (result.ok) {
-      this.accountForm = { name: '', type: 'Cash', initialBalance: 0 };
-      this.refreshAfterMutation();
-    }
+async addAccount(): Promise<void> {
+  if (!this.currentUser || !this.currentUser.id) {
+    this.showNotice('Sesi tidak valid, silakan login ulang.', 'danger');
+    return;
   }
+
+  const { name, type, initialBalance } = this.accountForm;
+
+  if (!name || !type) {
+    this.showNotice('Nama dan tipe akun wajib diisi!', 'warning');
+    return;
+  }
+
+  const balanceToSave = initialBalance ? Number(initialBalance) : 0;
+
+  try {
+    const { error } = await this.supabaseService.addAccount(
+      this.currentUser.id, 
+      name,
+      type,
+      balanceToSave
+    );
+
+    if (error) throw error;
+
+    this.showNotice('Akun berhasil ditambahkan!', 'success');
+    
+    this.accountForm = { name: '', type: 'Cash' as AccountType, initialBalance: 0 };
+    
+    await this.fetchAccountsFromSupabase();
+    
+    this.refresh();
+    this.runReport(false);
+    
+  } catch (error: any) {
+    this.showNotice(error.message || 'Gagal menyimpan akun ke database.', 'danger');
+  }
+}
+
+  // --- FUNGSI LAMA ---
 
   addTransaction(): void {
     const result = this.store.addTransaction(this.transactionForm);
@@ -480,28 +615,6 @@ export class HomePage implements OnInit {
     this.runReport(false);
   }
 
-  private refresh(): void {
-    this.currentUser = this.store.getCurrentUser();
-    this.data = this.store.getCurrentData();
-    this.budgetSummaries = this.store.getBudgetSummaries(this.budgetForm.month);
-
-    if (!this.transactionForm.accountId && this.data.accounts[0]) {
-      this.transactionForm.accountId = this.data.accounts[0].id;
-    }
-
-    if (!this.transferForm.fromAccountId && this.data.accounts[0]) {
-      this.transferForm.fromAccountId = this.data.accounts[0].id;
-    }
-
-    if (!this.transferForm.toAccountId && this.data.accounts[1]) {
-      this.transferForm.toAccountId = this.data.accounts[1].id;
-    }
-
-    if (!this.recurringForm.accountId && this.data.accounts[0]) {
-      this.recurringForm.accountId = this.data.accounts[0].id;
-    }
-  }
-
   private handleResult(ok: boolean, message: string, warnings: string[] | undefined): void {
     const hasWarnings = !!warnings && warnings.length > 0;
     this.showNotice(message, ok ? (hasWarnings ? 'warning' : 'success') : 'danger', warnings);
@@ -510,5 +623,15 @@ export class HomePage implements OnInit {
   private showNotice(message: string, tone: NoticeTone, warnings: string[] = []): void {
     this.notice = warnings.length > 0 ? `${message} ${warnings.join(' ')}` : message;
     this.noticeTone = tone;
+  }
+
+  loginDemo(): void {
+    // Helper lama, bisa dibiarkan atau diisi akun dummy supabase
+    const result = this.store.loginDemo();
+    this.handleResult(result.ok, result.message, result.warnings);
+    if (result.ok) {
+      this.refresh();
+      this.runReport(false);
+    }
   }
 }
