@@ -34,9 +34,9 @@
         </ion-segment-button>
       </ion-segment>
 
-      <!-- <ion-note *ngIf="notice" [color]="noticeTone" class="notice">
+      <ion-note *ngIf="notice" [color]="noticeTone" class="notice">
         {{ notice }}
-      </ion-note> -->
+      </ion-note>
 
       <ng-container [ngSwitch]="selectedSection">
         <section *ngSwitchCase="'dashboard'" class="content-grid">
@@ -112,7 +112,7 @@
                 ></ion-icon>
                 <ion-label>
                   <h3>{{ transactionTitle(transaction) }}</h3>
-                  <p>{{ transaction.date }} · {{ transaction.note || transaction.category }}</p>
+                  <p>{{ transaction.date }} - {{ transaction.note || transaction.category }}</p>
                 </ion-label>
                 <ion-text slot="end" [color]="transaction.type === 'income' ? 'success' : 'danger'">
                   {{ transactionAmount(transaction) }}
@@ -260,7 +260,7 @@
               <ion-item *ngFor="let transaction of data.transactions; trackBy: trackById">
                 <ion-label>
                   <h3>{{ transactionTitle(transaction) }}</h3>
-                  <p>{{ transaction.type }} · {{ transaction.category }} · {{ transaction.date }}</p>
+                  <p>{{ transaction.type }} - {{ transaction.category }} - {{ transaction.date }}</p>
                 </ion-label>
                 <ion-text slot="end" [color]="transaction.type === 'income' ? 'success' : 'danger'">
                   {{ transactionAmount(transaction) }}
@@ -382,7 +382,7 @@
               <ion-item *ngFor="let rule of data.recurringRules; trackBy: trackById">
                 <ion-label>
                   <h3>{{ rule.name }}</h3>
-                  <p>{{ recurringAccount(rule) }} · {{ rule.category }} · tanggal {{ rule.dayOfMonth }}</p>
+                  <p>{{ recurringAccount(rule) }} - {{ rule.category }} - tanggal {{ rule.dayOfMonth }}</p>
                 </ion-label>
                 <ion-text slot="end">{{ formatCurrency(rule.amount) }}</ion-text>
                 <ion-toggle slot="end" [checked]="rule.active" (ionChange)="toggleRecurring(rule.id, $any($event).detail.checked)"></ion-toggle>
@@ -435,7 +435,7 @@
               <ion-item *ngFor="let debt of data.debts; trackBy: trackById" class="debt-item">
                 <ion-label>
                   <h3>{{ debt.person }}</h3>
-                  <p>{{ debt.kind === 'debt' ? 'Hutang' : 'Piutang' }} · {{ debt.dueDate }} · {{ debtLabel(debt) }}</p>
+                  <p>{{ debt.kind === 'debt' ? 'Hutang' : 'Piutang' }} - {{ debt.dueDate }} - {{ debtLabel(debt) }}</p>
                   <small>{{ formatCurrency(debt.paidAmount) }} / {{ formatCurrency(debt.amount) }}</small>
                   <div class="payment-row" *ngIf="debt.status !== 'paid'">
                     <ion-input type="number" inputmode="decimal" [(ngModel)]="paymentForms[debt.id]" name="payment-{{ debt.id }}" placeholder="Bayar"></ion-input>

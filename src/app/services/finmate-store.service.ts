@@ -208,7 +208,6 @@ export interface GenerateRecurringResult {
   created: Transaction[];
 }
 
-const STORAGE_KEY = 'finmate-state-v1';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEMO_EMAIL = 'demo@finmate.test';
 const DEMO_PASSWORD = 'password123';
@@ -217,11 +216,10 @@ const DEMO_PASSWORD = 'password123';
   providedIn: 'root',
 })
 export class FinmateStoreService {
-  private state: FinmateState = this.loadState();
+  private state: FinmateState = createSeedState();
 
   constructor() {
     this.refreshDebtStatuses();
-    this.save();
   }
 
   getCurrentUser(): User | null {
@@ -930,25 +928,6 @@ export class FinmateStoreService {
 
   resetForTesting(seed = false): void {
     this.state = seed ? createSeedState() : { users: [], activeUserId: null, dataByUser: {} };
-    this.save();
-  }
-
-  private loadState(): FinmateState {
-    const raw = this.storageGet(STORAGE_KEY);
-    if (!raw) {
-      return createSeedState();
-    }
-
-    try {
-      const parsed = JSON.parse(raw) as FinmateState;
-      if (!Array.isArray(parsed.users) || !parsed.dataByUser) {
-        return createSeedState();
-      }
-
-      return parsed;
-    } catch {
-      return createSeedState();
-    }
   }
 
   private requireData(): FinmateData | null {
@@ -1208,25 +1187,7 @@ export class FinmateStoreService {
   }
 
   private save(): void {
-    this.storageSet(STORAGE_KEY, JSON.stringify(this.state));
-  }
-
-  private storageGet(key: string): string | null {
-    try {
-      return typeof localStorage === 'undefined' ? null : localStorage.getItem(key);
-    } catch {
-      return null;
-    }
-  }
-
-  private storageSet(key: string, value: string): void {
-    try {
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem(key, value);
-      }
-    } catch {
-      return;
-    }
+    return;
   }
 
   private makeId(prefix: string): string {

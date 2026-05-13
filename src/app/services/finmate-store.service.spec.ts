@@ -4,7 +4,6 @@ describe('FinmateStoreService', () => {
   let service: FinmateStoreService;
 
   beforeEach(() => {
-    localStorage.clear();
     service = new FinmateStoreService();
     service.resetForTesting();
     service.register('Fazle', 'fazle@example.com', 'secret1');

@@ -1,10 +1,10 @@
 # FinMate
 
-FinMate adalah aplikasi money manager hybrid mobile berbasis Ionic Angular sesuai proposal STI. App ini berjalan lokal dengan `localStorage` agar bisa langsung diuji tanpa kredensial Supabase.
+FinMate adalah aplikasi money manager hybrid mobile berbasis Ionic Angular sesuai proposal STI. Data aplikasi disimpan di Supabase memakai konfigurasi pada `src/environments/environment.ts`.
 
 ## Fitur
 
-- Login, register, validasi email/password, dan demo user.
+- Login, register, dan validasi email/password berbasis tabel `profiles` Supabase.
 - Multi akun finansial: Cash, Bank, E-Wallet, Other.
 - Income, expense, dan transfer antar akun dengan biaya admin.
 - Budgeting per kategori dan periode bulan.
@@ -13,10 +13,18 @@ FinMate adalah aplikasi money manager hybrid mobile berbasis Ionic Angular sesua
 - Laporan keuangan dengan filter tanggal, akun, kategori, total income, total expense, saldo akun, dan grafik harian.
 - Import/export CSV transaksi.
 
-## Akun Demo
+## Supabase
 
-- Email: `demo@finmate.test`
-- Password: `password123`
+Tabel yang dipakai aplikasi:
+
+- `profiles`
+- `accounts`
+- `transactions`
+- `budgets`
+- `recurring_transactions`
+- `debts`
+
+Catatan schema saat ini: `budgets` memakai kolom `limit_amount`, dan transfer pada `transactions` memakai `account_id` sebagai akun sumber serta `to_account_id` sebagai akun tujuan.
 
 ## Menjalankan
 

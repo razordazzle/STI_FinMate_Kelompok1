@@ -9,6 +9,12 @@
   --accent: #2563eb;
   --warning: #d97706;
   --danger: #dc2626;
+  --ion-background-color: var(--page-bg);
+  --ion-text-color: var(--ink);
+  --ion-color-step-50: #f8fafc;
+  --ion-color-step-100: #f1f5f9;
+  color: var(--ink);
+  color-scheme: light;
 }
 
 ion-content {
@@ -19,10 +25,52 @@ ion-content {
 ion-toolbar {
   --background: #ffffff;
   --border-color: var(--line);
+  --color: var(--ink);
+  color: var(--ink);
 }
 
 ion-title {
+  color: var(--ink);
   font-weight: 800;
+}
+
+ion-list,
+ion-item,
+ion-label,
+ion-input,
+ion-select,
+ion-text {
+  color: var(--ink);
+}
+
+ion-list {
+  background: transparent;
+}
+
+ion-item {
+  --background: transparent;
+  --color: var(--ink);
+  --border-color: var(--line);
+  --inner-padding-end: 0;
+}
+
+ion-input,
+ion-select {
+  --color: var(--ink);
+  --placeholder-color: var(--muted);
+  --highlight-color-focused: var(--brand);
+}
+
+ion-label,
+ion-item h3,
+.panel-heading h2,
+.metric strong,
+.budget-row strong {
+  color: var(--ink);
+}
+
+ion-text:not([color]) {
+  color: var(--ink);
 }
 
 .app-shell,
@@ -92,6 +140,7 @@ ion-title {
 .main-tabs {
   padding: 6px;
   margin-bottom: 12px;
+  color: var(--ink);
   background: #ffffff;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -100,6 +149,7 @@ ion-title {
 .main-tabs ion-segment-button {
   min-width: 104px;
   --indicator-color: var(--brand);
+  --color: var(--muted);
   --color-checked: var(--brand-dark);
 }
 
@@ -125,6 +175,7 @@ ion-title {
 
 .panel,
 .metric {
+  color: var(--ink);
   background: var(--panel-bg);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -173,15 +224,6 @@ ion-title {
   font-size: clamp(18px, 2.5vw, 28px);
   line-height: 1.1;
   overflow-wrap: anywhere;
-}
-
-ion-list {
-  background: transparent;
-}
-
-ion-item {
-  --background: transparent;
-  --inner-padding-end: 0;
 }
 
 ion-item h3 {
