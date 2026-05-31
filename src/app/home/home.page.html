@@ -356,7 +356,14 @@
           <form class="panel" (ngSubmit)="addRecurring()">
             <div class="panel-heading">
               <h2>Recurring Transaction</h2>
-              <ion-button size="small" fill="clear" type="button" (click)="generateRecurringToday()">
+              <ion-button
+                size="small"
+                fill="clear"
+                type="button"
+                (click)="generateRecurringToday()"
+                aria-label="Proses recurring jatuh tempo sampai hari ini"
+                title="Proses recurring jatuh tempo sampai hari ini"
+              >
                 <ion-icon slot="icon-only" name="play-forward-outline"></ion-icon>
               </ion-button>
             </div>
@@ -427,7 +434,13 @@
                 <ion-button slot="end" size="small" fill="clear" color="primary" (click)="payRecurring(rule)" [disabled]="!rule.active" title="Bayar Sekarang">
                   <ion-icon slot="icon-only" name="cash-outline"></ion-icon>
                 </ion-button>
-                <ion-toggle slot="end" [checked]="rule.active" (ionChange)="toggleRecurring(rule.id, $any($event).detail.checked)"></ion-toggle>
+                <ion-toggle
+                  slot="end"
+                  [checked]="rule.active"
+                  (ionChange)="toggleRecurring(rule.id, $any($event).detail.checked)"
+                  aria-label="Aktifkan atau nonaktifkan auto debet recurring"
+                  title="Auto debet aktif/nonaktif"
+                ></ion-toggle>
               </ion-item>
             </ion-list>
           </section>

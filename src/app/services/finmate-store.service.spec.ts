@@ -201,6 +201,27 @@ describe('FinmateStoreService', () => {
     expect(service.generateDueTransactions(today).data?.created.length).toBe(0);
   });
 
+  it('catches up missed recurring transactions through the selected date', () => {
+    const account = service.addAccount({ name: 'BCA', type: 'Bank', initialBalance: 100000 }).data!;
+
+    service.addRecurring({
+      name: 'Spotify',
+      type: 'expense',
+      accountId: account.id,
+      category: 'Hiburan',
+      amount: 10000,
+      dayOfMonth: 1,
+      startsOn: '2026-01-01',
+      active: true,
+    });
+
+    const result = service.generateDueTransactions('2026-03-02');
+
+    expect(result.data?.created.map((transaction) => transaction.date)).toEqual(['2026-01-01', '2026-02-01', '2026-03-01']);
+    expect(service.getCurrentData().accounts.find((item) => item.id === account.id)?.balance).toBe(70000);
+    expect(service.generateDueTransactions('2026-03-02').data?.created.length).toBe(0);
+  });
+
   it('moves debt state from partial to paid', () => {
     const account = service.addAccount({ name: 'Cash', type: 'Cash', initialBalance: 150000 }).data!;
     const debt = service.addDebt({

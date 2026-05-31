@@ -43,6 +43,11 @@ interface ImportRecord {
   note: string;
 }
 
+interface RecurringRunResult {
+  createdCount: number;
+  warnings: string[];
+}
+
 type TransactionDraft = Omit<Transaction, 'id' | 'createdAt'>;
 
 interface BalanceUpdatePlan {
@@ -251,7 +256,13 @@ export class HomePage implements OnInit {
     this.currentUser = result.data;
     this.setSessionUserId(result.data.id);
     await this.loadAllData();
-    this.showNotice(`Selamat datang, ${result.data.name}.`, 'success');
+    const recurringRun = await this.generateRecurringToday(false);
+    const recurringMessage = recurringRun.createdCount > 0 ? ` ${recurringRun.createdCount} transaksi recurring otomatis dicatat.` : '';
+    this.showNotice(
+      `Selamat datang, ${result.data.name}.${recurringMessage}`,
+      recurringRun.warnings.length > 0 ? 'warning' : 'success',
+      recurringRun.warnings
+    );
   }
 
   logout(): void {
@@ -628,7 +639,14 @@ export class HomePage implements OnInit {
       endsOn: '',
     };
     await this.loadAllData();
-    this.showNotice('Recurring transaction berhasil dibuat.', 'success');
+    const recurringRun = await this.generateRecurringToday(false);
+    const recurringMessage =
+      recurringRun.createdCount > 0 ? ` ${recurringRun.createdCount} transaksi jatuh tempo otomatis dicatat.` : '';
+    this.showNotice(
+      `Recurring transaction berhasil dibuat.${recurringMessage}`,
+      recurringRun.warnings.length > 0 ? 'warning' : 'success',
+      recurringRun.warnings
+    );
   }
 
   async toggleRecurring(id: string, active: boolean): Promise<void> {
@@ -639,24 +657,47 @@ export class HomePage implements OnInit {
     }
 
     await this.loadAllData();
-    this.showNotice(active ? 'Recurring diaktifkan.' : 'Recurring dinonaktifkan.', 'success');
-  }
 
-  async generateRecurringToday(showMessage = true): Promise<void> {
-    const user = this.requireUser(false);
-    if (!user) {
+    if (!active) {
+      this.showNotice('Recurring dinonaktifkan. Auto debet tidak akan dijalankan.', 'success');
       return;
     }
 
+    const recurringRun = await this.generateRecurringToday(false);
+    const recurringMessage =
+      recurringRun.createdCount > 0 ? ` ${recurringRun.createdCount} transaksi jatuh tempo otomatis dicatat.` : '';
+    this.showNotice(
+      `Recurring diaktifkan.${recurringMessage}`,
+      recurringRun.warnings.length > 0 ? 'warning' : 'success',
+      recurringRun.warnings
+    );
+  }
+
+  async generateRecurringToday(showMessage = true): Promise<RecurringRunResult> {
+    const user = this.requireUser(false);
+    if (!user) {
+      return { createdCount: 0, warnings: [] };
+    }
+
+    const runDate = todayIso();
+    this.today = runDate;
     const created: Transaction[] = [];
     const warnings: string[] = [];
-
-    for (const rule of this.data.recurringRules) {
-      if (!this.isRecurringDue(rule, this.today)) {
-        continue;
+    const dueItems: Array<{ dueDate: string; rule: RecurringRule; ruleIndex: number }> = [];
+    this.data.recurringRules.forEach((rule, ruleIndex) => {
+      for (const dueDate of this.getRecurringDueDates(rule, runDate)) {
+        dueItems.push({ dueDate, rule, ruleIndex });
       }
+    });
+    dueItems.sort(
+      (first, second) =>
+        first.dueDate.localeCompare(second.dueDate) ||
+        this.recurringTypeWeight(first.rule) - this.recurringTypeWeight(second.rule) ||
+        first.ruleIndex - second.ruleIndex
+    );
 
-      const duplicate = this.data.transactions.some((transaction) => this.matchesRecurringTransaction(transaction, rule, this.today));
+    for (const { dueDate, rule } of dueItems) {
+      const duplicate = this.data.transactions.some((transaction) => this.matchesRecurringTransaction(transaction, rule, dueDate));
       if (duplicate) {
         continue;
       }
@@ -677,7 +718,7 @@ export class HomePage implements OnInit {
         accountId: rule.accountId,
         category: rule.category,
         amount: rule.amount,
-        date: this.today,
+        date: dueDate,
         note: `Auto: ${rule.name}`,
         recurringId: rule.id,
       });
@@ -694,8 +735,10 @@ export class HomePage implements OnInit {
     }
 
     if (showMessage) {
-      this.showNotice(`${created.length} transaksi recurring dibuat.`, warnings.length > 0 ? 'warning' : 'success', warnings);
+      this.showNotice(`${created.length} transaksi recurring jatuh tempo dibuat.`, warnings.length > 0 ? 'warning' : 'success', warnings);
     }
+
+    return { createdCount: created.length, warnings };
   }
 
   async saveDebt(): Promise<void> {
@@ -1791,17 +1834,53 @@ export class HomePage implements OnInit {
     return 'unpaid';
   }
 
-  private isRecurringDue(rule: RecurringRule, date: string): boolean {
-    if (!rule.active || date < rule.startsOn || (rule.endsOn && date > rule.endsOn)) {
-      return false;
+  private getRecurringDueDates(rule: RecurringRule, untilDate: string): string[] {
+    if (!rule.active || untilDate < rule.startsOn) {
+      return [];
     }
 
-    const [year, month, day] = date.split('-').map(Number);
-    const dueDay = Math.min(rule.dayOfMonth, new Date(year, month, 0).getDate());
-    return day === dueDay;
+    const endDate = rule.endsOn && rule.endsOn < untilDate ? rule.endsOn : untilDate;
+    const [startYear, startMonth] = rule.startsOn.split('-').map(Number);
+    const [endYear, endMonth] = endDate.split('-').map(Number);
+    const dueDates: string[] = [];
+    let year = startYear;
+    let month = startMonth;
+
+    while (year < endYear || (year === endYear && month <= endMonth)) {
+      const dueDate = this.monthlyRecurringDate(year, month, rule.dayOfMonth);
+      if (dueDate >= rule.startsOn && dueDate <= endDate) {
+        dueDates.push(dueDate);
+      }
+
+      month += 1;
+      if (month > 12) {
+        month = 1;
+        year += 1;
+      }
+    }
+
+    return dueDates;
+  }
+
+  private monthlyRecurringDate(year: number, month: number, dayOfMonth: number): string {
+    const lastDayOfMonth = new Date(year, month, 0).getDate();
+    const dueDay = Math.min(dayOfMonth, lastDayOfMonth);
+    return `${year}-${this.padDatePart(month)}-${this.padDatePart(dueDay)}`;
+  }
+
+  private padDatePart(value: number): string {
+    return String(value).padStart(2, '0');
+  }
+
+  private recurringTypeWeight(rule: RecurringRule): number {
+    return rule.type === 'income' ? 0 : 1;
   }
 
   private matchesRecurringTransaction(transaction: Transaction, rule: RecurringRule, date: string): boolean {
+    if (transaction.recurringId) {
+      return transaction.recurringId === rule.id && transaction.date === date;
+    }
+
     return (
       transaction.date === date &&
       transaction.type === rule.type &&

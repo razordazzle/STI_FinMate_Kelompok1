@@ -893,12 +893,21 @@ export class FinmateStoreService {
     const created: Transaction[] = [];
     const warnings: string[] = [];
 
-    for (const rule of data.recurringRules) {
-      if (!this.isRecurringDue(rule, date)) {
-        continue;
+    const dueItems: Array<{ dueDate: string; rule: RecurringRule; ruleIndex: number }> = [];
+    data.recurringRules.forEach((rule, ruleIndex) => {
+      for (const dueDate of this.getRecurringDueDates(rule, date)) {
+        dueItems.push({ dueDate, rule, ruleIndex });
       }
+    });
+    dueItems.sort(
+      (first, second) =>
+        first.dueDate.localeCompare(second.dueDate) ||
+        this.recurringTypeWeight(first.rule) - this.recurringTypeWeight(second.rule) ||
+        first.ruleIndex - second.ruleIndex
+    );
 
-      const duplicate = data.transactions.some((transaction) => transaction.recurringId === rule.id && transaction.date === date);
+    for (const { dueDate, rule } of dueItems) {
+      const duplicate = data.transactions.some((transaction) => transaction.recurringId === rule.id && transaction.date === dueDate);
       if (duplicate) {
         continue;
       }
@@ -919,7 +928,7 @@ export class FinmateStoreService {
         accountId: account.id,
         category: rule.category,
         amount: rule.amount,
-        date,
+        date: dueDate,
         note: `Auto: ${rule.name}`,
         recurringId: rule.id,
       });
@@ -930,7 +939,7 @@ export class FinmateStoreService {
         account.balance = this.toMoney(account.balance - rule.amount);
       }
 
-      rule.lastGeneratedOn = date;
+      rule.lastGeneratedOn = dueDate;
       data.transactions.unshift(transaction);
       created.push(transaction);
     }
@@ -1366,22 +1375,41 @@ export class FinmateStoreService {
     return 'safe';
   }
 
-  private isRecurringDue(rule: RecurringRule, date: string): boolean {
-    if (!rule.active) {
-      return false;
+  private getRecurringDueDates(rule: RecurringRule, untilDate: string): string[] {
+    if (!rule.active || untilDate < rule.startsOn) {
+      return [];
     }
 
-    if (date < rule.startsOn) {
-      return false;
+    const endDate = rule.endsOn && rule.endsOn < untilDate ? rule.endsOn : untilDate;
+    const [startYear, startMonth] = rule.startsOn.split('-').map(Number);
+    const [endYear, endMonth] = endDate.split('-').map(Number);
+    const dueDates: string[] = [];
+    let year = startYear;
+    let month = startMonth;
+
+    while (year < endYear || (year === endYear && month <= endMonth)) {
+      const dueDate = this.monthlyRecurringDate(year, month, rule.dayOfMonth);
+      if (dueDate >= rule.startsOn && dueDate <= endDate) {
+        dueDates.push(dueDate);
+      }
+
+      month += 1;
+      if (month > 12) {
+        month = 1;
+        year += 1;
+      }
     }
 
-    if (rule.endsOn && date > rule.endsOn) {
-      return false;
-    }
+    return dueDates;
+  }
 
-    const [year, month, day] = date.split('-').map(Number);
-    const dueDay = Math.min(rule.dayOfMonth, daysInMonth(year, month));
-    return day === dueDay;
+  private monthlyRecurringDate(year: number, month: number, dayOfMonth: number): string {
+    const dueDay = Math.min(dayOfMonth, daysInMonth(year, month));
+    return `${year}-${padDatePart(month)}-${padDatePart(dueDay)}`;
+  }
+
+  private recurringTypeWeight(rule: RecurringRule): number {
+    return rule.type === 'income' ? 0 : 1;
   }
 
   private findAccountByName(name: string): Account | undefined {
@@ -1627,6 +1655,10 @@ export function todayIso(): string {
 
 function daysInMonth(year: number, month: number): number {
   return new Date(year, month, 0).getDate();
+}
+
+function padDatePart(value: number): string {
+  return String(value).padStart(2, '0');
 }
 
 function createSeedState(): FinmateState {
