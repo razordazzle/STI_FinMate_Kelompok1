@@ -118,6 +118,12 @@ export interface CreateAccountInput {
   initialBalance: unknown;
 }
 
+export interface UpdateAccountInput {
+  name: string;
+  type: AccountType;
+  balance: unknown;
+}
+
 export interface CreateTransactionInput {
   type: Exclude<TransactionType, 'transfer'>;
   accountId: string;
@@ -363,6 +369,65 @@ export class FinmateStoreService {
     return this.ok('Account berhasil dibuat.', this.clone(account));
   }
 
+  updateAccount(id: string, input: UpdateAccountInput): ActionResult<Account> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const account = data.accounts.find((item) => item.id === id);
+    if (!account) {
+      return this.fail('Account tidak ditemukan.');
+    }
+
+    const name = input.name.trim();
+    const balance = this.readAmount(input.balance, false);
+
+    if (!name) {
+      return this.fail('Account name wajib diisi.');
+    }
+
+    if (balance === null) {
+      return this.fail('Balance wajib berupa angka.');
+    }
+
+    if (balance < 0) {
+      return this.fail('Balance tidak boleh negatif.');
+    }
+
+    if (data.accounts.some((item) => item.id !== id && item.name.toLowerCase() === name.toLowerCase())) {
+      return this.fail('Account name sudah digunakan.');
+    }
+
+    account.name = name;
+    account.type = input.type;
+    account.balance = balance;
+    this.save();
+
+    return this.ok('Account berhasil diperbarui.', this.clone(account));
+  }
+
+  deleteAccount(id: string): ActionResult<Account> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const accountIndex = data.accounts.findIndex((item) => item.id === id);
+    if (accountIndex < 0) {
+      return this.fail('Account tidak ditemukan.');
+    }
+
+    if (this.isAccountInUse(data, id)) {
+      return this.fail('Account masih digunakan oleh transaksi atau recurring transaction.');
+    }
+
+    const [deleted] = data.accounts.splice(accountIndex, 1);
+    this.save();
+
+    return this.ok('Account berhasil dihapus.', this.clone(deleted));
+  }
+
   addTransaction(input: CreateTransactionInput): ActionResult<Transaction> {
     const data = this.requireData();
     if (!data) {
@@ -476,6 +541,147 @@ export class FinmateStoreService {
     return this.ok('Transfer berhasil dicatat.', this.clone(transaction));
   }
 
+  updateTransaction(id: string, input: CreateTransactionInput): ActionResult<Transaction> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const original = data.transactions.find((transaction) => transaction.id === id);
+    if (!original || original.type === 'transfer') {
+      return this.fail('Transaksi tidak ditemukan.');
+    }
+
+    const amount = this.readAmount(input.amount, true);
+    const account = data.accounts.find((item) => item.id === input.accountId);
+    const category = input.category.trim();
+
+    if (!account) {
+      return this.fail(input.type === 'income' ? 'Akun tujuan wajib dipilih.' : 'Akun sumber wajib dipilih.');
+    }
+
+    if (!category) {
+      return this.fail('Kategori wajib dipilih.');
+    }
+
+    if (amount === null || amount <= 0) {
+      return this.fail('Nominal transaksi harus lebih dari 0.');
+    }
+
+    if (!input.date) {
+      return this.fail('Tanggal transaksi wajib diisi.');
+    }
+
+    const replacement: Transaction = {
+      id: original.id,
+      type: input.type,
+      accountId: account.id,
+      category,
+      amount,
+      date: input.date,
+      note: input.note ?? '',
+      recurringId: original.recurringId,
+      createdAt: original.createdAt,
+    };
+    const balanceError = this.applyTransactionBalanceChange(data, original, replacement);
+    if (balanceError) {
+      return this.fail(balanceError);
+    }
+
+    Object.assign(original, replacement);
+    this.save();
+
+    const warnings = input.type === 'expense' ? this.getBudgetWarnings(data, category, input.date) : [];
+    return this.ok('Transaksi berhasil diperbarui.', this.clone(original), warnings);
+  }
+
+  updateTransfer(id: string, input: TransferInput): ActionResult<Transaction> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const original = data.transactions.find((transaction) => transaction.id === id);
+    if (!original || original.type !== 'transfer') {
+      return this.fail('Transfer tidak ditemukan.');
+    }
+
+    const amount = this.readAmount(input.amount, true);
+    const fee = this.readAmount(input.fee, false) ?? 0;
+    const fromAccount = data.accounts.find((account) => account.id === input.fromAccountId);
+    const toAccount = data.accounts.find((account) => account.id === input.toAccountId);
+
+    if (!fromAccount) {
+      return this.fail('Akun sumber wajib dipilih.');
+    }
+
+    if (!toAccount) {
+      return this.fail('Akun tujuan wajib dipilih.');
+    }
+
+    if (fromAccount.id === toAccount.id) {
+      return this.fail('Akun sumber dan tujuan tidak boleh sama.');
+    }
+
+    if (amount === null || amount <= 0) {
+      return this.fail('Nominal transfer harus lebih dari 0.');
+    }
+
+    if (fee < 0) {
+      return this.fail('Biaya admin tidak boleh negatif.');
+    }
+
+    if (!input.date) {
+      return this.fail('Tanggal transfer wajib diisi.');
+    }
+
+    const replacement: Transaction = {
+      id: original.id,
+      type: 'transfer',
+      fromAccountId: fromAccount.id,
+      toAccountId: toAccount.id,
+      category: 'Transfer',
+      amount,
+      fee,
+      date: input.date,
+      note: input.note ?? '',
+      recurringId: original.recurringId,
+      createdAt: original.createdAt,
+    };
+    const balanceError = this.applyTransactionBalanceChange(data, original, replacement);
+    if (balanceError) {
+      return this.fail(balanceError);
+    }
+
+    Object.assign(original, replacement);
+    this.save();
+
+    return this.ok('Transfer berhasil diperbarui.', this.clone(original));
+  }
+
+  deleteTransaction(id: string): ActionResult<Transaction> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const transactionIndex = data.transactions.findIndex((transaction) => transaction.id === id);
+    if (transactionIndex < 0) {
+      return this.fail('Transaksi tidak ditemukan.');
+    }
+
+    const transaction = data.transactions[transactionIndex];
+    const balanceError = this.applyTransactionBalanceChange(data, transaction, null);
+    if (balanceError) {
+      return this.fail(balanceError);
+    }
+
+    data.transactions.splice(transactionIndex, 1);
+    this.save();
+
+    return this.ok('Transaksi berhasil dihapus.', this.clone(transaction));
+  }
+
   setBudget(input: CreateBudgetInput): ActionResult<Budget> {
     const data = this.requireData();
     if (!data) {
@@ -515,6 +721,61 @@ export class FinmateStoreService {
     this.save();
 
     return this.ok('Budget berhasil disimpan.', this.clone(budget));
+  }
+
+  updateBudget(id: string, input: CreateBudgetInput): ActionResult<Budget> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const budget = data.budgets.find((item) => item.id === id);
+    if (!budget) {
+      return this.fail('Budget tidak ditemukan.');
+    }
+
+    const category = input.category.trim();
+    const limit = this.readAmount(input.limit, true);
+
+    if (!category) {
+      return this.fail('Kategori budget wajib dipilih.');
+    }
+
+    if (!/^\d{4}-\d{2}$/.test(input.month)) {
+      return this.fail('Periode budget wajib dipilih.');
+    }
+
+    if (limit === null || limit <= 0) {
+      return this.fail('Budget harus lebih dari 0.');
+    }
+
+    if (data.budgets.some((item) => item.id !== id && item.category === category && item.month === input.month)) {
+      return this.fail('Budget untuk kategori dan bulan tersebut sudah ada.');
+    }
+
+    budget.category = category;
+    budget.month = input.month;
+    budget.limit = limit;
+    this.save();
+
+    return this.ok('Budget berhasil diperbarui.', this.clone(budget));
+  }
+
+  deleteBudget(id: string): ActionResult<Budget> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const budgetIndex = data.budgets.findIndex((item) => item.id === id);
+    if (budgetIndex < 0) {
+      return this.fail('Budget tidak ditemukan.');
+    }
+
+    const [deleted] = data.budgets.splice(budgetIndex, 1);
+    this.save();
+
+    return this.ok('Budget berhasil dihapus.', this.clone(deleted));
   }
 
   getBudgetSummaries(month: string): BudgetSummary[] {
@@ -717,7 +978,65 @@ export class FinmateStoreService {
     return this.ok(input.kind === 'debt' ? 'Hutang berhasil dicatat.' : 'Piutang berhasil dicatat.', this.clone(entry));
   }
 
-  recordDebtPayment(id: string, value: unknown): ActionResult<DebtEntry> {
+  updateDebt(id: string, input: CreateDebtInput): ActionResult<DebtEntry> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const entry = data.debts.find((item) => item.id === id);
+    if (!entry) {
+      return this.fail('Data hutang/piutang tidak ditemukan.');
+    }
+
+    const person = input.person.trim();
+    const amount = this.readAmount(input.amount, true);
+
+    if (!person) {
+      return this.fail('Nama orang wajib diisi.');
+    }
+
+    if (amount === null || amount <= 0) {
+      return this.fail('Nominal hutang/piutang harus lebih dari 0.');
+    }
+
+    if (amount < entry.paidAmount) {
+      return this.fail('Nominal tidak boleh lebih kecil dari nominal yang sudah dibayar/diterima.');
+    }
+
+    if (!input.dueDate) {
+      return this.fail('Tanggal jatuh tempo wajib diisi.');
+    }
+
+    entry.kind = input.kind;
+    entry.person = person;
+    entry.amount = amount;
+    entry.dueDate = input.dueDate;
+    entry.note = input.note ?? '';
+    entry.status = this.resolveDebtStatus(entry.amount, entry.paidAmount, entry.dueDate);
+    this.save();
+
+    return this.ok('Data hutang/piutang berhasil diperbarui.', this.clone(entry));
+  }
+
+  deleteDebt(id: string): ActionResult<DebtEntry> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const index = data.debts.findIndex((item) => item.id === id);
+    if (index < 0) {
+      return this.fail('Data hutang/piutang tidak ditemukan.');
+    }
+
+    const [deleted] = data.debts.splice(index, 1);
+    this.save();
+
+    return this.ok('Data hutang/piutang berhasil dihapus.', this.clone(deleted));
+  }
+
+  recordDebtPayment(id: string, value: unknown, accountId?: string): ActionResult<DebtEntry> {
     const data = this.requireData();
     if (!data) {
       return this.fail('Silakan login terlebih dahulu.');
@@ -725,9 +1044,14 @@ export class FinmateStoreService {
 
     const payment = this.readAmount(value, true);
     const entry = data.debts.find((item) => item.id === id);
+    const account = accountId ? data.accounts.find((item) => item.id === accountId) : undefined;
 
     if (!entry) {
       return this.fail('Data hutang/piutang tidak ditemukan.');
+    }
+
+    if (accountId && !account) {
+      return this.fail('Akun pembayaran wajib dipilih.');
     }
 
     if (payment === null || payment <= 0) {
@@ -737,6 +1061,14 @@ export class FinmateStoreService {
     const remaining = this.toMoney(entry.amount - entry.paidAmount);
     if (payment > remaining) {
       return this.fail('Pembayaran melebihi sisa nominal.');
+    }
+
+    if (account) {
+      if (entry.kind === 'debt' && account.balance < payment) {
+        return this.fail('Saldo akun tidak mencukupi untuk membayar hutang.');
+      }
+
+      account.balance = this.toMoney(entry.kind === 'debt' ? account.balance - payment : account.balance + payment);
     }
 
     entry.paidAmount = this.toMoney(entry.paidAmount + payment);
@@ -1059,6 +1391,74 @@ export class FinmateStoreService {
     }
 
     return data.accounts.find((account) => account.name.toLowerCase() === name.trim().toLowerCase());
+  }
+
+  private isAccountInUse(data: FinmateData, accountId: string): boolean {
+    return (
+      data.transactions.some(
+        (transaction) =>
+          transaction.accountId === accountId || transaction.fromAccountId === accountId || transaction.toAccountId === accountId
+      ) || data.recurringRules.some((rule) => rule.accountId === accountId)
+    );
+  }
+
+  private applyTransactionBalanceChange(
+    data: FinmateData,
+    original: Transaction,
+    replacement: Transaction | Omit<Transaction, 'id' | 'createdAt'> | null
+  ): string | null {
+    const nextBalances = new Map(data.accounts.map((account) => [account.id, account.balance]));
+    const affectedAccountIds = new Set<string>();
+
+    const applyEffect = (transaction: Transaction | Omit<Transaction, 'id' | 'createdAt'>, multiplier: number): string | null => {
+      const applyDelta = (accountId: string | undefined, delta: number): string | null => {
+        if (!accountId || !nextBalances.has(accountId)) {
+          return 'Akun pada transaksi tidak ditemukan.';
+        }
+
+        affectedAccountIds.add(accountId);
+        nextBalances.set(accountId, this.toMoney((nextBalances.get(accountId) ?? 0) + delta));
+        return null;
+      };
+
+      if (transaction.type === 'income') {
+        return applyDelta(transaction.accountId, transaction.amount * multiplier);
+      }
+
+      if (transaction.type === 'expense') {
+        return applyDelta(transaction.accountId, -transaction.amount * multiplier);
+      }
+
+      const debit = this.toMoney(transaction.amount + (transaction.fee ?? 0));
+      return applyDelta(transaction.fromAccountId, -debit * multiplier) ?? applyDelta(transaction.toAccountId, transaction.amount * multiplier);
+    };
+
+    const reverseError = applyEffect(original, -1);
+    if (reverseError) {
+      return reverseError;
+    }
+
+    if (replacement) {
+      const applyError = applyEffect(replacement, 1);
+      if (applyError) {
+        return applyError;
+      }
+    }
+
+    for (const accountId of affectedAccountIds) {
+      if ((nextBalances.get(accountId) ?? 0) < 0) {
+        return 'Saldo akun tidak mencukupi untuk perubahan transaksi ini.';
+      }
+    }
+
+    for (const account of data.accounts) {
+      const nextBalance = nextBalances.get(account.id);
+      if (nextBalance !== undefined) {
+        account.balance = nextBalance;
+      }
+    }
+
+    return null;
   }
 
   private accountName(id: string): string {
