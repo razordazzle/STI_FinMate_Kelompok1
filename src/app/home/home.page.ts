@@ -1429,4 +1429,41 @@ export class HomePage implements OnInit {
   private fail<T = never>(message: string): ActionResult<T> {
     return { ok: false, message };
   }
+
+  async payRecurring(rule: RecurringRule): Promise<void> {
+    const user = this.requireUser(false);
+    if (!user) {
+      return;
+    }
+
+    const account = this.data.accounts.find((item) => item.id === rule.accountId);
+    if (!account) {
+      this.showNotice(`Akun untuk ${rule.name} tidak ditemukan.`, 'danger');
+      return;
+    }
+
+    if (rule.type === 'expense' && account.balance < rule.amount) {
+      this.showNotice(`Saldo ${account.name} tidak mencukupi untuk ${rule.name}.`, 'danger');
+      return;
+    }
+
+    const result = await this.createIncomeExpenseTransaction({
+      type: rule.type,
+      accountId: rule.accountId,
+      category: rule.category,
+      amount: rule.amount,
+      date: this.today,
+      note: `Manual (Pay Now): ${rule.name}`,
+      recurringId: rule.id,
+    });
+
+    if (result.ok) {
+      await this.loadAllData();
+      this.showNotice(`Pembayaran ${rule.name} berhasil dicatat.`, 'success', result.warnings);
+    } else {
+      this.handleResult(result.ok, result.message, result.warnings);
+    }
+  }
 }
+
+

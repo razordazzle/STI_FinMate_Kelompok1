@@ -385,6 +385,10 @@
                   <p>{{ recurringAccount(rule) }} - {{ rule.category }} - tanggal {{ rule.dayOfMonth }}</p>
                 </ion-label>
                 <ion-text slot="end">{{ formatCurrency(rule.amount) }}</ion-text>
+
+                <ion-button slot="end" size="small" fill="clear" color="primary" (click)="payRecurring(rule)" [disabled]="!rule.active" title="Bayar Sekarang">
+                  <ion-icon slot="icon-only" name="cash-outline"></ion-icon>
+                </ion-button>
                 <ion-toggle slot="end" [checked]="rule.active" (ionChange)="toggleRecurring(rule.id, $any($event).detail.checked)"></ion-toggle>
               </ion-item>
             </ion-list>
