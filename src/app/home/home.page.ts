@@ -1918,6 +1918,135 @@ export class HomePage implements OnInit {
     return headers.join('|') === BACKUP_CSV_HEADERS.join('|');
   }
 
+  // private async importFinmateBackupCsvText(text: string): Promise<ActionResult<ImportResult>> {
+  //   const user = this.requireUser(false);
+  //   if (!user) {
+  //     return this.fail('Silakan login terlebih dahulu.');
+  //   }
+
+  //   if (!text.trim()) {
+  //     return this.fail('File CSV kosong.');
+  //   }
+
+  //   const rows = this.parseCsv(text);
+  //   if (rows.length < 2) {
+  //     return this.fail('CSV tidak memiliki data backup.');
+  //   }
+
+  //   const headers = rows[0].map((header) => header.trim());
+  //   if (headers.join('|') !== BACKUP_CSV_HEADERS.join('|')) {
+  //     return this.fail('Kolom CSV backup tidak sesuai format FinMate.');
+  //   }
+
+  //   const records = rows.slice(1).map((row, index) => ({
+  //     line: index + 2,
+  //     record: this.rowToBackupRecord(headers, row),
+  //   }));
+  //   let imported = 0;
+  //   let skipped = 0;
+  //   const errors: string[] = [];
+  //   const warnings: string[] = [];
+
+  //   const accountRows = records.filter(({ record }) => record.recordType.trim().toLowerCase() === 'account');
+  //   for (const { line, record } of accountRows) {
+  //     const name = record.name.trim();
+  //     const balance = this.readAmount(record.balance);
+  //     const type = this.normalizeAccountType(record.accountType);
+
+  //     if (!name) {
+  //       errors.push(`Baris ${line}: nama akun wajib diisi.`);
+  //       continue;
+  //     }
+
+  //     if (balance === null || balance < 0) {
+  //       errors.push(`Baris ${line}: balance akun tidak valid.`);
+  //       continue;
+  //     }
+
+  //     const existing = this.findAccountByName(name);
+  //     const result = existing
+  //       ? await this.supabaseService.updateAccount(existing.id, name, type, balance)
+  //       : await this.supabaseService.addAccount(user.id, name, type, balance);
+
+  //     if (result.error || !result.data) {
+  //       errors.push(`Baris ${line}: ${result.error?.message ?? 'Gagal menyimpan akun.'}`);
+  //       continue;
+  //     }
+
+  //     imported += 1;
+  //     const currentIndex = this.data.accounts.findIndex((account) => account.id === result.data?.id);
+  //     if (currentIndex >= 0) {
+  //       this.data.accounts[currentIndex] = result.data;
+  //     } else {
+  //       this.data.accounts.push(result.data);
+  //     }
+  //   }
+
+  //   await this.loadAllData();
+  //   const accountIdsByName = new Map(this.data.accounts.map((account) => [this.csvAccountKey(account.name), account.id]));
+  //   const fingerprints = new Set(this.data.transactions.map((transaction) => this.transactionFingerprint(transaction)));
+
+  //   for (const { line, record } of records) {
+  //     const recordType = record.recordType.trim().toLowerCase() as BackupRecordType;
+  //     if (recordType === 'account') {
+  //       continue;
+  //     }
+
+  //     if (!['transaction', 'budget', 'recurring', 'debt'].includes(recordType)) {
+  //       errors.push(`Baris ${line}: recordType tidak valid.`);
+  //       continue;
+  //     }
+
+  //     if (recordType === 'transaction') {
+  //       const result = await this.importBackupTransactionRow(user.id, record, line, accountIdsByName, fingerprints);
+  //       if (result.ok && result.data) {
+  //         imported += 1;
+  //         fingerprints.add(this.transactionFingerprint(result.data));
+  //       } else if (result.message === 'SKIPPED') {
+  //         skipped += 1;
+  //       } else {
+  //         errors.push(`Baris ${line}: ${result.message}`);
+  //       }
+  //       continue;
+  //     }
+
+  //     if (recordType === 'budget') {
+  //       const result = await this.importBackupBudgetRow(user.id, record, line);
+  //       if (result.ok) {
+  //         imported += 1;
+  //       } else {
+  //         errors.push(`Baris ${line}: ${result.message}`);
+  //       }
+  //       continue;
+  //     }
+
+  //     if (recordType === 'recurring') {
+  //       const result = await this.importBackupRecurringRow(user.id, record, accountIdsByName);
+  //       if (result.ok) {
+  //         imported += 1;
+  //       } else if (result.message === 'SKIPPED') {
+  //         skipped += 1;
+  //       } else {
+  //         errors.push(`Baris ${line}: ${result.message}`);
+  //       }
+  //       continue;
+  //     }
+
+  //     const result = await this.importBackupDebtRow(user.id, record);
+  //     if (result.ok) {
+  //       imported += 1;
+  //     } else {
+  //       errors.push(`Baris ${line}: ${result.message}`);
+  //     }
+  //   }
+
+  //   await this.loadAllData();
+  //   this.runReport(false);
+  //   warnings.push('Laporan dihitung ulang otomatis dari data backup yang berhasil diimpor.');
+  //   const message = errors.length > 0 ? 'Import backup selesai dengan beberapa error.' : 'Import backup CSV berhasil.';
+  //   return this.ok(message, { imported, skipped, errors }, [...warnings, ...errors]);
+  // }
+
   private async importFinmateBackupCsvText(text: string): Promise<ActionResult<ImportResult>> {
     const user = this.requireUser(false);
     if (!user) {
@@ -1937,6 +2066,17 @@ export class HomePage implements OnInit {
     if (headers.join('|') !== BACKUP_CSV_HEADERS.join('|')) {
       return this.fail('Kolom CSV backup tidak sesuai format FinMate.');
     }
+
+    if (!window.confirm('PERHATIAN: Mengimpor backup akan MENGHAPUS semua data saat ini dan menggantinya persis seperti di CSV. Lanjutkan?')) {
+      return this.fail('Impor dibatalkan oleh pengguna.');
+    }
+
+    const purgeResult = await this.supabaseService.purgeUserData(user.id);
+    if (purgeResult.error) {
+      return this.fail(`Gagal mereset database: ${purgeResult.error.message}`);
+    }
+
+    this.data = createEmptyFinmateData();
 
     const records = rows.slice(1).map((row, index) => ({
       line: index + 2,
@@ -2046,6 +2186,8 @@ export class HomePage implements OnInit {
     const message = errors.length > 0 ? 'Import backup selesai dengan beberapa error.' : 'Import backup CSV berhasil.';
     return this.ok(message, { imported, skipped, errors }, [...warnings, ...errors]);
   }
+
+  
 
   private async importBackupTransactionRow(
     userId: string,

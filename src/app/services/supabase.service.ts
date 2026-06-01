@@ -354,6 +354,23 @@ export class SupabaseService {
     return { data: (data as BudgetRow[]).map((row) => this.mapBudget(row)), error: null };
   }
 
+  async purgeUserData(userId: string): Promise<ServiceResponse<null>> {
+    const childTables = ['transactions', 'recurring_transactions', 'budgets', 'debts'];
+    for (const table of childTables) {
+      const { error } = await this.supabase.from(table).delete().eq('user_id', userId);
+      if (error) {
+        return this.failure(`Gagal menghapus ${table}: ${error.message}`);
+      }
+    }
+
+    const { error: accountError } = await this.supabase.from('accounts').delete().eq('user_id', userId);
+    if (accountError) {
+      return this.failure(`Gagal menghapus accounts: ${accountError.message}`);
+    }
+
+    return { data: null, error: null };
+  }
+
   async upsertBudget(userId: string, input: CreateBudgetInput, limit: number): Promise<ServiceResponse<Budget>> {
     const existing = await this.supabase
       .from('budgets')
