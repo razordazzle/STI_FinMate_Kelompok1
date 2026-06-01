@@ -256,6 +256,24 @@ ion-item small {
   grid-template-columns: minmax(112px, max-content) repeat(2, 36px);
 }
 
+.recurring-actions {
+  display: grid;
+  grid-template-columns: minmax(88px, max-content) 34px 46px repeat(2, 34px);
+  align-items: center;
+  justify-items: end;
+  gap: 4px;
+}
+
+.recurring-actions ion-button {
+  width: 34px;
+  height: 34px;
+  margin: 0;
+}
+
+.recurring-actions ion-toggle {
+  justify-self: end;
+}
+
 .budget-list {
   display: grid;
   gap: 12px;
@@ -518,10 +536,15 @@ ion-item small {
 
   .account-actions,
   .transaction-actions,
+  .recurring-actions,
   .debt-actions {
     grid-template-columns: 1fr repeat(2, 34px);
     width: 100%;
     justify-items: end;
+  }
+
+  .recurring-actions {
+    grid-template-columns: minmax(88px, 1fr) 34px 46px repeat(2, 34px);
   }
 
   .payment-row {

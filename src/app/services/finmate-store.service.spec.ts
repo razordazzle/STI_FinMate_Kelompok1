@@ -222,6 +222,46 @@ describe('FinmateStoreService', () => {
     expect(service.generateDueTransactions('2026-03-02').data?.created.length).toBe(0);
   });
 
+  it('edits and deletes recurring rules without deleting generated transactions', () => {
+    const bca = service.addAccount({ name: 'BCA', type: 'Bank', initialBalance: 100000 }).data!;
+    const dana = service.addAccount({ name: 'DANA', type: 'E-Wallet', initialBalance: 0 }).data!;
+    const rule = service.addRecurring({
+      name: 'Spotify',
+      type: 'expense',
+      accountId: bca.id,
+      category: 'Hiburan',
+      amount: 10000,
+      dayOfMonth: 1,
+      startsOn: '2026-01-01',
+      active: true,
+    }).data!;
+
+    expect(service.generateDueTransactions('2026-01-01').data?.created[0].recurringId).toBe(rule.id);
+
+    const updated = service.updateRecurring(rule.id, {
+      name: 'Sangu',
+      type: 'income',
+      accountId: dana.id,
+      category: 'Uang Saku',
+      amount: 50000,
+      dayOfMonth: 15,
+      startsOn: '2026-01-15',
+      endsOn: '2026-12-31',
+      active: false,
+    });
+
+    expect(updated.ok).toBeTrue();
+    expect(updated.data?.name).toBe('Sangu');
+    expect(updated.data?.type).toBe('income');
+    expect(updated.data?.accountId).toBe(dana.id);
+    expect(updated.data?.active).toBeFalse();
+    expect(service.generateDueTransactions('2026-01-15').data?.created.length).toBe(0);
+    expect(service.deleteRecurring(rule.id).ok).toBeTrue();
+    expect(service.getCurrentData().recurringRules.some((item) => item.id === rule.id)).toBeFalse();
+    expect(service.getCurrentData().transactions.length).toBe(1);
+    expect(service.getCurrentData().transactions[0].recurringId).toBeUndefined();
+  });
+
   it('moves debt state from partial to paid', () => {
     const account = service.addAccount({ name: 'Cash', type: 'Cash', initialBalance: 150000 }).data!;
     const debt = service.addDebt({
@@ -280,5 +320,28 @@ describe('FinmateStoreService', () => {
     expect(imported.data?.imported).toBe(1);
     expect(exported.data).toContain('CSV import');
     expect(service.importTransactionsCsv('wrong,header\nvalue').ok).toBeFalse();
+  });
+
+  it('imports CSV into a new user by creating missing accounts', () => {
+    const csv = [
+      'type,date,account,fromAccount,toAccount,category,amount,fee,note',
+      'expense,5/1/2026,BCA,,,Makanan,100,0,Sarapan',
+      'income,5/2/2026,BCA,,,Gaji,50,0,Bonus',
+      'transfer,5/3/2026,,BCA,Cash,Transfer,25,0,Tarik tunai',
+    ].join('\n');
+
+    const imported = service.importTransactionsCsv(csv);
+    const data = service.getCurrentData();
+    const bca = data.accounts.find((account) => account.name === 'BCA');
+    const cash = data.accounts.find((account) => account.name === 'Cash');
+
+    expect(imported.ok).toBeTrue();
+    expect(imported.data?.imported).toBe(3);
+    expect(imported.warnings?.[0]).toContain('Akun dibuat otomatis');
+    expect(bca?.type).toBe('Bank');
+    expect(bca?.balance).toBe(25);
+    expect(cash?.type).toBe('Cash');
+    expect(cash?.balance).toBe(25);
+    expect(data.transactions.some((transaction) => transaction.date === '2026-05-01')).toBeTrue();
   });
 });

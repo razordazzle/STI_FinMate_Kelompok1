@@ -6,6 +6,7 @@ import {
   AccountType,
   BudgetSummary,
   DebtEntry,
+  DebtStatus,
   EXPENSE_CATEGORIES,
   FinmateData,
   INCOME_CATEGORIES,
@@ -43,6 +44,41 @@ interface ImportRecord {
   note: string;
 }
 
+interface PreparedImportRecord {
+  line: number;
+  record: ImportRecord;
+  type: TransactionType;
+}
+
+type BackupRecordType = 'account' | 'transaction' | 'budget' | 'recurring' | 'debt';
+
+interface BackupRecord {
+  recordType: string;
+  name: string;
+  accountType: string;
+  balance: string;
+  transactionType: string;
+  date: string;
+  account: string;
+  fromAccount: string;
+  toAccount: string;
+  category: string;
+  amount: string;
+  fee: string;
+  note: string;
+  month: string;
+  limit: string;
+  recurringDay: string;
+  startsOn: string;
+  endsOn: string;
+  active: string;
+  debtKind: string;
+  person: string;
+  paidAmount: string;
+  dueDate: string;
+  status: string;
+}
+
 interface RecurringRunResult {
   createdCount: number;
   warnings: string[];
@@ -57,6 +93,33 @@ interface BalanceUpdatePlan {
 
 const SESSION_KEY = 'finmate_session_user_id';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const TRANSACTION_CSV_HEADERS = ['type', 'date', 'account', 'fromAccount', 'toAccount', 'category', 'amount', 'fee', 'note'] as const;
+const BACKUP_CSV_HEADERS = [
+  'recordType',
+  'name',
+  'accountType',
+  'balance',
+  'transactionType',
+  'date',
+  'account',
+  'fromAccount',
+  'toAccount',
+  'category',
+  'amount',
+  'fee',
+  'note',
+  'month',
+  'limit',
+  'recurringDay',
+  'startsOn',
+  'endsOn',
+  'active',
+  'debtKind',
+  'person',
+  'paidAmount',
+  'dueDate',
+  'status',
+] as const;
 
 @Component({
   selector: 'app-home',
@@ -153,6 +216,7 @@ export class HomePage implements OnInit {
     endsOn: '',
     active: true,
   };
+  editingRecurringId: string | null = null;
 
   debtForm = {
     kind: 'debt' as 'debt' | 'receivable',
@@ -580,7 +644,7 @@ export class HomePage implements OnInit {
     this.showNotice('Budget berhasil dihapus.', 'success');
   }
 
-  async addRecurring(): Promise<void> {
+  async saveRecurring(): Promise<void> {
     const user = this.requireUser();
     if (!user) {
       return;
@@ -625,20 +689,24 @@ export class HomePage implements OnInit {
       return;
     }
 
-    const result = await this.supabaseService.addRecurringRule(user.id, { ...this.recurringForm, name }, amount, dayOfMonth);
+    const recurringId = this.editingRecurringId;
+    const wasEditing = !!recurringId;
+    const result = recurringId
+      ? await this.supabaseService.updateRecurringRule(recurringId, { ...this.recurringForm, name }, amount, dayOfMonth)
+      : await this.supabaseService.addRecurringRule(user.id, { ...this.recurringForm, name }, amount, dayOfMonth);
     if (result.error) {
       this.showNotice(result.error.message, 'danger');
       return;
     }
 
-    this.recurringForm = {
-      ...this.recurringForm,
-      name: '',
-      amount: null,
-      dayOfMonth: 1,
-      endsOn: '',
-    };
+    this.resetRecurringForm();
     await this.loadAllData();
+
+    if (wasEditing) {
+      this.showNotice('Recurring transaction berhasil diperbarui.', 'success');
+      return;
+    }
+
     const recurringRun = await this.generateRecurringToday(false);
     const recurringMessage =
       recurringRun.createdCount > 0 ? ` ${recurringRun.createdCount} transaksi jatuh tempo otomatis dicatat.` : '';
@@ -647,6 +715,46 @@ export class HomePage implements OnInit {
       recurringRun.warnings.length > 0 ? 'warning' : 'success',
       recurringRun.warnings
     );
+  }
+
+  startEditRecurring(rule: RecurringRule): void {
+    this.editingRecurringId = rule.id;
+    this.recurringForm = {
+      name: rule.name,
+      type: rule.type,
+      accountId: rule.accountId,
+      category: rule.category,
+      amount: rule.amount,
+      dayOfMonth: rule.dayOfMonth,
+      startsOn: rule.startsOn,
+      endsOn: rule.endsOn ?? '',
+      active: rule.active,
+    };
+    this.showNotice(`Mode edit recurring ${rule.name}.`, 'medium');
+  }
+
+  cancelRecurringEdit(): void {
+    this.resetRecurringForm();
+    this.showNotice('Edit recurring dibatalkan.', 'medium');
+  }
+
+  async deleteRecurring(rule: RecurringRule): Promise<void> {
+    if (!window.confirm(`Hapus recurring ${rule.name}? Histori transaksi yang sudah tercatat tetap disimpan.`)) {
+      return;
+    }
+
+    const result = await this.supabaseService.deleteRecurringRule(rule.id);
+    if (result.error) {
+      this.showNotice(result.error.message, 'danger');
+      return;
+    }
+
+    if (this.editingRecurringId === rule.id) {
+      this.resetRecurringForm();
+    }
+
+    await this.loadAllData();
+    this.showNotice('Recurring transaction berhasil dihapus.', 'success');
   }
 
   async toggleRecurring(id: string, active: boolean): Promise<void> {
@@ -920,31 +1028,15 @@ export class HomePage implements OnInit {
       return;
     }
 
-    const headers = ['type', 'date', 'account', 'fromAccount', 'toAccount', 'category', 'amount', 'fee', 'note'];
-    const rows = this.data.transactions
-      .slice()
-      .reverse()
-      .map((transaction) => [
-        transaction.type,
-        transaction.date,
-        transaction.accountId ? this.accountName(transaction.accountId) : '',
-        transaction.fromAccountId ? this.accountName(transaction.fromAccountId) : '',
-        transaction.toAccountId ? this.accountName(transaction.toAccountId) : '',
-        transaction.category,
-        String(transaction.amount),
-        String(transaction.fee ?? 0),
-        transaction.note,
-      ]);
-
-    const csv = [headers, ...rows].map((row) => row.map((cell) => this.escapeCsv(cell)).join(',')).join('\n');
+    const csv = this.buildFinmateBackupCsv();
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `finmate-transactions-${this.today}.csv`;
+    anchor.download = `finmate-backup-${this.today}.csv`;
     anchor.click();
     URL.revokeObjectURL(url);
-    this.showNotice('CSV berhasil dibuat.', 'success');
+    this.showNotice('Backup CSV berhasil dibuat.', 'success');
   }
 
   importCsv(event: Event): void {
@@ -963,7 +1055,10 @@ export class HomePage implements OnInit {
 
     const reader = new FileReader();
     reader.onload = async () => {
-      const result = await this.importTransactionsCsvText(String(reader.result ?? ''));
+      const text = String(reader.result ?? '');
+      const result = this.isFinmateBackupCsv(text)
+        ? await this.importFinmateBackupCsvText(text)
+        : await this.importTransactionsCsvText(text);
       this.lastImport = result.data ?? null;
       this.handleResult(result.ok, result.message, result.warnings);
       input.value = '';
@@ -1142,6 +1237,21 @@ export class HomePage implements OnInit {
       category: 'Makanan',
       month,
       limit: null,
+    };
+  }
+
+  private resetRecurringForm(): void {
+    this.editingRecurringId = null;
+    this.recurringForm = {
+      name: '',
+      type: 'expense',
+      accountId: this.data.accounts[0]?.id ?? '',
+      category: 'Tagihan',
+      amount: null,
+      dayOfMonth: 1,
+      startsOn: this.today,
+      endsOn: '',
+      active: true,
     };
   }
 
@@ -1705,6 +1815,458 @@ export class HomePage implements OnInit {
       .sort((first, second) => second.percentage - first.percentage);
   }
 
+  private buildFinmateBackupCsv(): string {
+    const rows: string[][] = [[...BACKUP_CSV_HEADERS]];
+
+    for (const account of this.data.accounts) {
+      rows.push(this.backupRow({ recordType: 'account', name: account.name, accountType: account.type, balance: String(account.balance) }));
+    }
+
+    for (const transaction of this.data.transactions.slice().reverse()) {
+      rows.push(
+        this.backupRow({
+          recordType: 'transaction',
+          transactionType: transaction.type,
+          date: transaction.date,
+          account: transaction.accountId ? this.accountName(transaction.accountId) : '',
+          fromAccount: transaction.fromAccountId ? this.accountName(transaction.fromAccountId) : '',
+          toAccount: transaction.toAccountId ? this.accountName(transaction.toAccountId) : '',
+          category: transaction.category,
+          amount: String(transaction.amount),
+          fee: String(transaction.fee ?? 0),
+          note: transaction.note,
+        })
+      );
+    }
+
+    for (const budget of this.data.budgets) {
+      rows.push(this.backupRow({ recordType: 'budget', category: budget.category, month: budget.month, limit: String(budget.limit) }));
+    }
+
+    for (const rule of this.data.recurringRules) {
+      rows.push(
+        this.backupRow({
+          recordType: 'recurring',
+          name: rule.name,
+          transactionType: rule.type,
+          account: this.accountName(rule.accountId),
+          category: rule.category,
+          amount: String(rule.amount),
+          recurringDay: String(rule.dayOfMonth),
+          startsOn: rule.startsOn,
+          endsOn: rule.endsOn ?? '',
+          active: String(rule.active),
+        })
+      );
+    }
+
+    for (const debt of this.data.debts) {
+      rows.push(
+        this.backupRow({
+          recordType: 'debt',
+          debtKind: debt.kind,
+          person: debt.person,
+          amount: String(debt.amount),
+          paidAmount: String(debt.paidAmount),
+          dueDate: debt.dueDate,
+          note: debt.note,
+          status: debt.status,
+        })
+      );
+    }
+
+    return rows.map((row) => row.map((cell) => this.escapeCsv(cell)).join(',')).join('\n');
+  }
+
+  private backupRow(record: Partial<BackupRecord>): string[] {
+    const normalized = this.emptyBackupRecord(record);
+    return BACKUP_CSV_HEADERS.map((header) => normalized[header]);
+  }
+
+  private emptyBackupRecord(record: Partial<BackupRecord> = {}): BackupRecord {
+    return {
+      recordType: record.recordType ?? '',
+      name: record.name ?? '',
+      accountType: record.accountType ?? '',
+      balance: record.balance ?? '',
+      transactionType: record.transactionType ?? '',
+      date: record.date ?? '',
+      account: record.account ?? '',
+      fromAccount: record.fromAccount ?? '',
+      toAccount: record.toAccount ?? '',
+      category: record.category ?? '',
+      amount: record.amount ?? '',
+      fee: record.fee ?? '',
+      note: record.note ?? '',
+      month: record.month ?? '',
+      limit: record.limit ?? '',
+      recurringDay: record.recurringDay ?? '',
+      startsOn: record.startsOn ?? '',
+      endsOn: record.endsOn ?? '',
+      active: record.active ?? '',
+      debtKind: record.debtKind ?? '',
+      person: record.person ?? '',
+      paidAmount: record.paidAmount ?? '',
+      dueDate: record.dueDate ?? '',
+      status: record.status ?? '',
+    };
+  }
+
+  private isFinmateBackupCsv(text: string): boolean {
+    const rows = this.parseCsv(text);
+    const headers = rows[0]?.map((header) => header.trim()) ?? [];
+    return headers.join('|') === BACKUP_CSV_HEADERS.join('|');
+  }
+
+  private async importFinmateBackupCsvText(text: string): Promise<ActionResult<ImportResult>> {
+    const user = this.requireUser(false);
+    if (!user) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    if (!text.trim()) {
+      return this.fail('File CSV kosong.');
+    }
+
+    const rows = this.parseCsv(text);
+    if (rows.length < 2) {
+      return this.fail('CSV tidak memiliki data backup.');
+    }
+
+    const headers = rows[0].map((header) => header.trim());
+    if (headers.join('|') !== BACKUP_CSV_HEADERS.join('|')) {
+      return this.fail('Kolom CSV backup tidak sesuai format FinMate.');
+    }
+
+    const records = rows.slice(1).map((row, index) => ({
+      line: index + 2,
+      record: this.rowToBackupRecord(headers, row),
+    }));
+    let imported = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    const accountRows = records.filter(({ record }) => record.recordType.trim().toLowerCase() === 'account');
+    for (const { line, record } of accountRows) {
+      const name = record.name.trim();
+      const balance = this.readAmount(record.balance);
+      const type = this.normalizeAccountType(record.accountType);
+
+      if (!name) {
+        errors.push(`Baris ${line}: nama akun wajib diisi.`);
+        continue;
+      }
+
+      if (balance === null || balance < 0) {
+        errors.push(`Baris ${line}: balance akun tidak valid.`);
+        continue;
+      }
+
+      const existing = this.findAccountByName(name);
+      const result = existing
+        ? await this.supabaseService.updateAccount(existing.id, name, type, balance)
+        : await this.supabaseService.addAccount(user.id, name, type, balance);
+
+      if (result.error || !result.data) {
+        errors.push(`Baris ${line}: ${result.error?.message ?? 'Gagal menyimpan akun.'}`);
+        continue;
+      }
+
+      imported += 1;
+      const currentIndex = this.data.accounts.findIndex((account) => account.id === result.data?.id);
+      if (currentIndex >= 0) {
+        this.data.accounts[currentIndex] = result.data;
+      } else {
+        this.data.accounts.push(result.data);
+      }
+    }
+
+    await this.loadAllData();
+    const accountIdsByName = new Map(this.data.accounts.map((account) => [this.csvAccountKey(account.name), account.id]));
+    const fingerprints = new Set(this.data.transactions.map((transaction) => this.transactionFingerprint(transaction)));
+
+    for (const { line, record } of records) {
+      const recordType = record.recordType.trim().toLowerCase() as BackupRecordType;
+      if (recordType === 'account') {
+        continue;
+      }
+
+      if (!['transaction', 'budget', 'recurring', 'debt'].includes(recordType)) {
+        errors.push(`Baris ${line}: recordType tidak valid.`);
+        continue;
+      }
+
+      if (recordType === 'transaction') {
+        const result = await this.importBackupTransactionRow(user.id, record, line, accountIdsByName, fingerprints);
+        if (result.ok && result.data) {
+          imported += 1;
+          fingerprints.add(this.transactionFingerprint(result.data));
+        } else if (result.message === 'SKIPPED') {
+          skipped += 1;
+        } else {
+          errors.push(`Baris ${line}: ${result.message}`);
+        }
+        continue;
+      }
+
+      if (recordType === 'budget') {
+        const result = await this.importBackupBudgetRow(user.id, record, line);
+        if (result.ok) {
+          imported += 1;
+        } else {
+          errors.push(`Baris ${line}: ${result.message}`);
+        }
+        continue;
+      }
+
+      if (recordType === 'recurring') {
+        const result = await this.importBackupRecurringRow(user.id, record, accountIdsByName);
+        if (result.ok) {
+          imported += 1;
+        } else if (result.message === 'SKIPPED') {
+          skipped += 1;
+        } else {
+          errors.push(`Baris ${line}: ${result.message}`);
+        }
+        continue;
+      }
+
+      const result = await this.importBackupDebtRow(user.id, record);
+      if (result.ok) {
+        imported += 1;
+      } else {
+        errors.push(`Baris ${line}: ${result.message}`);
+      }
+    }
+
+    await this.loadAllData();
+    this.runReport(false);
+    warnings.push('Laporan dihitung ulang otomatis dari data backup yang berhasil diimpor.');
+    const message = errors.length > 0 ? 'Import backup selesai dengan beberapa error.' : 'Import backup CSV berhasil.';
+    return this.ok(message, { imported, skipped, errors }, [...warnings, ...errors]);
+  }
+
+  private async importBackupTransactionRow(
+    userId: string,
+    record: BackupRecord,
+    line: number,
+    accountIdsByName: Map<string, string>,
+    fingerprints: Set<string>
+  ): Promise<ActionResult<Transaction>> {
+    const type = record.transactionType.trim().toLowerCase();
+    const date = this.normalizeCsvDate(record.date);
+    const amount = this.readAmount(record.amount);
+    const fee = this.readAmount(record.fee) ?? 0;
+
+    if (!['income', 'expense', 'transfer'].includes(type)) {
+      return this.fail('transactionType tidak valid.');
+    }
+
+    if (!date) {
+      return this.fail('tanggal transaksi tidak valid.');
+    }
+
+    if (amount === null || amount <= 0 || fee < 0) {
+      return this.fail('nominal transaksi tidak valid.');
+    }
+
+    const normalizedRecord = { ...record, type, date, amount: String(amount), fee: String(fee) };
+    if (fingerprints.has(this.csvFingerprint(normalizedRecord))) {
+      return this.fail('SKIPPED');
+    }
+
+    const transaction =
+      type === 'transfer'
+        ? {
+            type: 'transfer' as const,
+            fromAccountId: accountIdsByName.get(this.csvAccountKey(record.fromAccount)),
+            toAccountId: accountIdsByName.get(this.csvAccountKey(record.toAccount)),
+            category: record.category.trim() || 'Transfer',
+            amount,
+            fee,
+            date,
+            note: record.note,
+          }
+        : {
+            type: type as Exclude<TransactionType, 'transfer'>,
+            accountId: accountIdsByName.get(this.csvAccountKey(record.account)),
+            category: record.category.trim(),
+            amount,
+            fee: 0,
+            date,
+            note: record.note,
+          };
+
+    if (type === 'transfer' && (!transaction.fromAccountId || !transaction.toAccountId)) {
+      return this.fail('akun transfer tidak ditemukan.');
+    }
+
+    if (type !== 'transfer' && !transaction.accountId) {
+      return this.fail('akun transaksi tidak ditemukan.');
+    }
+
+    if (!transaction.category) {
+      return this.fail('kategori transaksi wajib diisi.');
+    }
+
+    const result = await this.supabaseService.addTransaction(userId, transaction);
+    if (result.error || !result.data) {
+      return this.fail(result.error?.message ?? 'Gagal menyimpan transaksi.');
+    }
+
+    return this.ok('Transaksi backup berhasil diimpor.', result.data);
+  }
+
+  private async importBackupBudgetRow(userId: string, record: BackupRecord, line: number): Promise<ActionResult<void>> {
+    const category = record.category.trim();
+    const limit = this.readAmount(record.limit);
+
+    if (!category) {
+      return this.fail('kategori budget wajib diisi.');
+    }
+
+    if (!/^\d{4}-\d{2}$/.test(record.month)) {
+      return this.fail('bulan budget tidak valid.');
+    }
+
+    if (limit === null || limit <= 0) {
+      return this.fail('limit budget tidak valid.');
+    }
+
+    const result = await this.supabaseService.upsertBudget(userId, { category, month: record.month, limit }, limit);
+    if (result.error) {
+      return this.fail(result.error.message || `Gagal import budget di baris ${line}.`);
+    }
+
+    return this.ok('Budget backup berhasil diimpor.', undefined);
+  }
+
+  private async importBackupRecurringRow(
+    userId: string,
+    record: BackupRecord,
+    accountIdsByName: Map<string, string>
+  ): Promise<ActionResult<void>> {
+    const name = record.name.trim();
+    const type = record.transactionType.trim().toLowerCase();
+    const accountId = accountIdsByName.get(this.csvAccountKey(record.account));
+    const amount = this.readAmount(record.amount);
+    const dayOfMonth = Number(record.recurringDay);
+    const startsOn = this.normalizeCsvDate(record.startsOn);
+    const parsedEndsOn = record.endsOn.trim() ? this.normalizeCsvDate(record.endsOn) : null;
+    const endsOn = parsedEndsOn ?? undefined;
+
+    if (!name) {
+      return this.fail('nama recurring wajib diisi.');
+    }
+
+    if (type !== 'income' && type !== 'expense') {
+      return this.fail('jenis recurring tidak valid.');
+    }
+
+    if (!accountId) {
+      return this.fail('akun recurring tidak ditemukan.');
+    }
+
+    if (!record.category.trim()) {
+      return this.fail('kategori recurring wajib diisi.');
+    }
+
+    if (amount === null || amount <= 0) {
+      return this.fail('nominal recurring tidak valid.');
+    }
+
+    if (!Number.isInteger(dayOfMonth) || dayOfMonth < 1 || dayOfMonth > 31) {
+      return this.fail('tanggal recurring tidak valid.');
+    }
+
+    if (!startsOn || (record.endsOn.trim() && !parsedEndsOn)) {
+      return this.fail('tanggal mulai/selesai recurring tidak valid.');
+    }
+
+    const duplicate = this.data.recurringRules.some(
+      (rule) =>
+        rule.name.toLowerCase() === name.toLowerCase() &&
+        rule.type === type &&
+        rule.accountId === accountId &&
+        rule.category === record.category.trim() &&
+        rule.amount === amount &&
+        rule.dayOfMonth === dayOfMonth &&
+        rule.startsOn === startsOn &&
+        (rule.endsOn ?? '') === (endsOn ?? '')
+    );
+    if (duplicate) {
+      return this.fail('SKIPPED');
+    }
+
+    const result = await this.supabaseService.addRecurringRule(
+      userId,
+      {
+        name,
+        type: type as Exclude<TransactionType, 'transfer'>,
+        accountId,
+        category: record.category.trim(),
+        amount,
+        dayOfMonth,
+        startsOn,
+        endsOn,
+        active: this.parseCsvBoolean(record.active),
+      },
+      amount,
+      dayOfMonth
+    );
+
+    if (result.error) {
+      return this.fail(result.error.message);
+    }
+
+    return this.ok('Recurring backup berhasil diimpor.', undefined);
+  }
+
+  private async importBackupDebtRow(userId: string, record: BackupRecord): Promise<ActionResult<void>> {
+    const kind = record.debtKind.trim().toLowerCase();
+    const person = record.person.trim();
+    const amount = this.readAmount(record.amount);
+    const paidAmount = this.readAmount(record.paidAmount) ?? 0;
+    const dueDate = this.normalizeCsvDate(record.dueDate);
+    const status = this.normalizeDebtStatus(record.status);
+
+    if (kind !== 'debt' && kind !== 'receivable') {
+      return this.fail('jenis hutang/piutang tidak valid.');
+    }
+
+    if (!person) {
+      return this.fail('nama hutang/piutang wajib diisi.');
+    }
+
+    if (amount === null || amount <= 0 || paidAmount < 0 || paidAmount > amount) {
+      return this.fail('nominal hutang/piutang tidak valid.');
+    }
+
+    if (!dueDate) {
+      return this.fail('jatuh tempo hutang/piutang tidak valid.');
+    }
+
+    const result = await this.supabaseService.addDebt(
+      userId,
+      { kind: kind as 'debt' | 'receivable', person, amount, dueDate, note: record.note },
+      amount,
+      status
+    );
+    if (result.error || !result.data) {
+      return this.fail(result.error?.message ?? 'Gagal import hutang/piutang.');
+    }
+
+    if (paidAmount > 0) {
+      const payment = await this.supabaseService.updateDebtPayment(result.data.id, paidAmount, status);
+      if (payment.error) {
+        return this.fail(payment.error.message);
+      }
+    }
+
+    return this.ok('Hutang/piutang backup berhasil diimpor.', undefined);
+  }
+
   private async importTransactionsCsvText(text: string): Promise<ActionResult<ImportResult>> {
     if (!this.currentUser) {
       return this.fail('Silakan login terlebih dahulu.');
@@ -1729,6 +2291,7 @@ export class HomePage implements OnInit {
     let skipped = 0;
     const errors: string[] = [];
     const fingerprints = new Set(this.data.transactions.map((transaction) => this.transactionFingerprint(transaction)));
+    const preparedRecords: PreparedImportRecord[] = [];
 
     for (const [index, row] of rows.slice(1).entries()) {
       const line = index + 2;
@@ -1740,11 +2303,38 @@ export class HomePage implements OnInit {
         continue;
       }
 
-      if (!record.date || Number.isNaN(Date.parse(record.date))) {
+      const normalizedDate = this.normalizeCsvDate(record.date);
+      if (!normalizedDate) {
         errors.push(`Baris ${line}: tanggal tidak valid.`);
         continue;
       }
 
+      record.date = normalizedDate;
+
+      if (type === 'transfer') {
+        if (!record.fromAccount.trim()) {
+          errors.push(`Baris ${line}: fromAccount wajib diisi untuk transfer.`);
+          continue;
+        }
+
+        if (!record.toAccount.trim()) {
+          errors.push(`Baris ${line}: toAccount wajib diisi untuk transfer.`);
+          continue;
+        }
+      } else if (!record.account.trim()) {
+        errors.push(`Baris ${line}: account wajib diisi.`);
+        continue;
+      }
+
+      preparedRecords.push({ line, record, type: type as TransactionType });
+    }
+
+    const ensuredAccounts = await this.ensureCsvImportAccounts(preparedRecords);
+    if (!ensuredAccounts.ok) {
+      errors.push(ensuredAccounts.message);
+    }
+
+    for (const { line, record, type } of preparedRecords) {
       const candidateFingerprint = this.csvFingerprint(record);
       if (fingerprints.has(candidateFingerprint)) {
         skipped += 1;
@@ -1782,7 +2372,146 @@ export class HomePage implements OnInit {
 
     await this.loadAllData();
     const message = errors.length > 0 ? 'Import selesai dengan beberapa error.' : 'Import CSV berhasil.';
-    return this.ok(message, { imported, skipped, errors }, errors);
+    const warnings = [...(ensuredAccounts.warnings ?? []), ...errors];
+    return this.ok(message, { imported, skipped, errors }, warnings);
+  }
+
+  private async ensureCsvImportAccounts(records: PreparedImportRecord[]): Promise<ActionResult<string[]>> {
+    const user = this.requireUser(false);
+    if (!user) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const accountNames = this.collectCsvAccountNames(records);
+    if (accountNames.length === 0) {
+      return this.ok('Tidak ada akun baru dari CSV.', []);
+    }
+
+    const openingBalances = this.calculateCsvOpeningBalances(records);
+    const createdAccounts: string[] = [];
+
+    for (const accountName of accountNames) {
+      if (this.findAccountByName(accountName)) {
+        continue;
+      }
+
+      const initialBalance = openingBalances.get(this.csvAccountKey(accountName)) ?? 0;
+      const result = await this.supabaseService.addAccount(
+        user.id,
+        accountName,
+        this.inferCsvAccountType(accountName),
+        initialBalance
+      );
+
+      if (result.error || !result.data) {
+        return this.fail(`Gagal membuat akun ${accountName}: ${result.error?.message ?? 'Unknown error'}`);
+      }
+
+      this.data.accounts.push(result.data);
+      createdAccounts.push(initialBalance > 0 ? `${accountName} (${this.formatCurrency(initialBalance)})` : accountName);
+    }
+
+    const warnings =
+      createdAccounts.length > 0
+        ? [`Akun dibuat otomatis dari CSV: ${createdAccounts.join(', ')}. Saldo dalam tanda kurung adalah saldo pembuka agar histori transaksi bisa diimpor.`]
+        : [];
+    return this.ok('Akun CSV siap dipakai.', createdAccounts, warnings);
+  }
+
+  private collectCsvAccountNames(records: PreparedImportRecord[]): string[] {
+    const names = new Map<string, string>();
+    const remember = (name: string): void => {
+      const normalized = name.trim();
+      if (normalized) {
+        names.set(this.csvAccountKey(normalized), normalized);
+      }
+    };
+
+    for (const { record, type } of records) {
+      if (type === 'transfer') {
+        remember(record.fromAccount);
+        remember(record.toAccount);
+      } else {
+        remember(record.account);
+      }
+    }
+
+    return [...names.values()];
+  }
+
+  private calculateCsvOpeningBalances(records: PreparedImportRecord[]): Map<string, number> {
+    const openingBalances = new Map<string, number>();
+    const runningBalances = new Map<string, number>();
+
+    const applyDelta = (name: string, delta: number): void => {
+      const key = this.csvAccountKey(name);
+      if (!runningBalances.has(key)) {
+        runningBalances.set(key, this.findAccountByName(name)?.balance ?? 0);
+        openingBalances.set(key, 0);
+      }
+
+      const nextBalance = this.toMoney((runningBalances.get(key) ?? 0) + delta);
+      if (nextBalance >= 0) {
+        runningBalances.set(key, nextBalance);
+        return;
+      }
+
+      openingBalances.set(key, this.toMoney((openingBalances.get(key) ?? 0) - nextBalance));
+      runningBalances.set(key, 0);
+    };
+
+    for (const { record, type } of records) {
+      const amount = this.readAmount(record.amount);
+      const fee = this.readAmount(record.fee) ?? 0;
+      if (amount === null || amount <= 0 || fee < 0) {
+        continue;
+      }
+
+      if (type === 'income') {
+        applyDelta(record.account, amount);
+      } else if (type === 'expense') {
+        applyDelta(record.account, -amount);
+      } else {
+        applyDelta(record.fromAccount, -this.toMoney(amount + fee));
+        applyDelta(record.toAccount, amount);
+      }
+    }
+
+    return openingBalances;
+  }
+
+  private inferCsvAccountType(name: string): AccountType {
+    const normalized = name.trim().toLowerCase();
+    if (['cash', 'tunai'].includes(normalized)) {
+      return 'Cash';
+    }
+
+    if (['dana', 'ovo', 'gopay', 'shopeepay', 'linkaja'].includes(normalized)) {
+      return 'E-Wallet';
+    }
+
+    return 'Bank';
+  }
+
+  private normalizeAccountType(value: string): AccountType {
+    return this.accountTypes.includes(value as AccountType) ? (value as AccountType) : this.inferCsvAccountType(value);
+  }
+
+  private normalizeDebtStatus(value: string): DebtStatus {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'paid' || normalized === 'partial' || normalized === 'overdue' || normalized === 'unpaid') {
+      return normalized;
+    }
+
+    return 'unpaid';
+  }
+
+  private parseCsvBoolean(value: string): boolean {
+    return ['true', '1', 'yes', 'ya', 'aktif'].includes(value.trim().toLowerCase());
+  }
+
+  private csvAccountKey(name: string): string {
+    return name.trim().toLowerCase();
   }
 
   private getBudgetWarnings(category: string, date: string): string[] {
@@ -2006,6 +2735,64 @@ export class HomePage implements OnInit {
       fee: record['fee'] ?? '',
       note: record['note'] ?? '',
     };
+  }
+
+  private rowToBackupRecord(headers: string[], row: string[]): BackupRecord {
+    const record = headers.reduce<Record<string, string>>((current, header, index) => {
+      current[header] = row[index] ?? '';
+      return current;
+    }, {});
+
+    return this.emptyBackupRecord({
+      recordType: record['recordType'],
+      name: record['name'],
+      accountType: record['accountType'],
+      balance: record['balance'],
+      transactionType: record['transactionType'],
+      date: record['date'],
+      account: record['account'],
+      fromAccount: record['fromAccount'],
+      toAccount: record['toAccount'],
+      category: record['category'],
+      amount: record['amount'],
+      fee: record['fee'],
+      note: record['note'],
+      month: record['month'],
+      limit: record['limit'],
+      recurringDay: record['recurringDay'],
+      startsOn: record['startsOn'],
+      endsOn: record['endsOn'],
+      active: record['active'],
+      debtKind: record['debtKind'],
+      person: record['person'],
+      paidAmount: record['paidAmount'],
+      dueDate: record['dueDate'],
+      status: record['status'],
+    });
+  }
+
+  private normalizeCsvDate(value: string): string | null {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return trimmed;
+    }
+
+    const slashDate = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (slashDate) {
+      const [, month, day, year] = slashDate;
+      return `${year}-${this.padDatePart(Number(month))}-${this.padDatePart(Number(day))}`;
+    }
+
+    const parsed = new Date(trimmed);
+    if (Number.isNaN(parsed.getTime())) {
+      return null;
+    }
+
+    return parsed.toISOString().slice(0, 10);
   }
 
   private escapeCsv(value: string): string {

@@ -468,6 +468,46 @@ export class SupabaseService {
     return { data: this.mapRecurring(data as RecurringRow), error: null };
   }
 
+  async updateRecurringRule(
+    id: string,
+    input: CreateRecurringInput,
+    amount: number,
+    dayOfMonth: number
+  ): Promise<ServiceResponse<RecurringRule>> {
+    const { data, error } = await this.supabase
+      .from('recurring_transactions')
+      .update({
+        name: input.name.trim(),
+        type: input.type,
+        account_id: input.accountId,
+        category: input.category,
+        amount,
+        day_of_month: dayOfMonth,
+        starts_on: input.startsOn,
+        ends_on: input.endsOn || null,
+        active: input.active,
+      })
+      .eq('id', id)
+      .select('*')
+      .single();
+
+    if (error) {
+      return this.failure(error.message);
+    }
+
+    return { data: this.mapRecurring(data as RecurringRow), error: null };
+  }
+
+  async deleteRecurringRule(id: string): Promise<ServiceResponse<null>> {
+    const { error } = await this.supabase.from('recurring_transactions').delete().eq('id', id);
+
+    if (error) {
+      return this.failure(error.message);
+    }
+
+    return { data: null, error: null };
+  }
+
   async getDebts(userId: string): Promise<ServiceResponse<DebtEntry[]>> {
     const { data, error } = await this.supabase
       .from('debts')
