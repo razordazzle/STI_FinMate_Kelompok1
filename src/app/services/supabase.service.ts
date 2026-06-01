@@ -227,6 +227,21 @@ export class SupabaseService {
     return { data: this.mapAccount(data as AccountRow), error: null };
   }
 
+  async updateAccount(accountId: string, name: string, type: AccountType, balance: number): Promise<ServiceResponse<Account>> {
+    const { data, error } = await this.supabase
+      .from('accounts')
+      .update({ name, type, balance })
+      .eq('id', accountId)
+      .select('*')
+      .single();
+
+    if (error) {
+      return this.failure(error.message);
+    }
+
+    return { data: this.mapAccount(data as AccountRow), error: null };
+  }
+
   async updateAccountBalance(accountId: string, balance: number): Promise<ServiceResponse<Account>> {
     const { data, error } = await this.supabase
       .from('accounts')
@@ -240,6 +255,16 @@ export class SupabaseService {
     }
 
     return { data: this.mapAccount(data as AccountRow), error: null };
+  }
+
+  async deleteAccount(accountId: string): Promise<ServiceResponse<null>> {
+    const { error } = await this.supabase.from('accounts').delete().eq('id', accountId);
+
+    if (error) {
+      return this.failure(error.message);
+    }
+
+    return { data: null, error: null };
   }
 
   async getTransactions(userId: string): Promise<ServiceResponse<Transaction[]>> {
@@ -271,6 +296,30 @@ export class SupabaseService {
         date: transaction.date,
         note: transaction.note,
       })
+      .select('*')
+      .single();
+
+    if (error) {
+      return this.failure(error.message);
+    }
+
+    return { data: this.mapTransaction(data as TransactionRow), error: null };
+  }
+
+  async updateTransaction(transactionId: string, transaction: Omit<Transaction, 'id' | 'createdAt'>): Promise<ServiceResponse<Transaction>> {
+    const { data, error } = await this.supabase
+      .from('transactions')
+      .update({
+        type: transaction.type,
+        account_id: transaction.accountId ?? transaction.fromAccountId ?? null,
+        to_account_id: transaction.type === 'transfer' ? transaction.toAccountId ?? null : null,
+        category: transaction.category,
+        amount: transaction.amount,
+        fee: transaction.type === 'transfer' ? transaction.fee ?? 0 : 0,
+        date: transaction.date,
+        note: transaction.note,
+      })
+      .eq('id', transactionId)
       .select('*')
       .single();
 
@@ -336,6 +385,35 @@ export class SupabaseService {
     return { data: this.mapBudget(data as BudgetRow), error: null };
   }
 
+  async updateBudget(budgetId: string, input: CreateBudgetInput, limit: number): Promise<ServiceResponse<Budget>> {
+    const { data, error } = await this.supabase
+      .from('budgets')
+      .update({
+        category: input.category,
+        month: input.month,
+        limit_amount: limit,
+      })
+      .eq('id', budgetId)
+      .select('*')
+      .single();
+
+    if (error) {
+      return this.failure(error.message);
+    }
+
+    return { data: this.mapBudget(data as BudgetRow), error: null };
+  }
+
+  async deleteBudget(budgetId: string): Promise<ServiceResponse<null>> {
+    const { error } = await this.supabase.from('budgets').delete().eq('id', budgetId);
+
+    if (error) {
+      return this.failure(error.message);
+    }
+
+    return { data: null, error: null };
+  }
+
   async getRecurringRules(userId: string): Promise<ServiceResponse<RecurringRule[]>> {
     const { data, error } = await this.supabase
       .from('recurring_transactions')
@@ -390,6 +468,46 @@ export class SupabaseService {
     return { data: this.mapRecurring(data as RecurringRow), error: null };
   }
 
+  async updateRecurringRule(
+    id: string,
+    input: CreateRecurringInput,
+    amount: number,
+    dayOfMonth: number
+  ): Promise<ServiceResponse<RecurringRule>> {
+    const { data, error } = await this.supabase
+      .from('recurring_transactions')
+      .update({
+        name: input.name.trim(),
+        type: input.type,
+        account_id: input.accountId,
+        category: input.category,
+        amount,
+        day_of_month: dayOfMonth,
+        starts_on: input.startsOn,
+        ends_on: input.endsOn || null,
+        active: input.active,
+      })
+      .eq('id', id)
+      .select('*')
+      .single();
+
+    if (error) {
+      return this.failure(error.message);
+    }
+
+    return { data: this.mapRecurring(data as RecurringRow), error: null };
+  }
+
+  async deleteRecurringRule(id: string): Promise<ServiceResponse<null>> {
+    const { error } = await this.supabase.from('recurring_transactions').delete().eq('id', id);
+
+    if (error) {
+      return this.failure(error.message);
+    }
+
+    return { data: null, error: null };
+  }
+
   async getDebts(userId: string): Promise<ServiceResponse<DebtEntry[]>> {
     const { data, error } = await this.supabase
       .from('debts')
@@ -427,6 +545,28 @@ export class SupabaseService {
     return { data: this.mapDebt(data as DebtRow), error: null };
   }
 
+  async updateDebt(id: string, input: CreateDebtInput, amount: number, status: DebtStatus): Promise<ServiceResponse<DebtEntry>> {
+    const { data, error } = await this.supabase
+      .from('debts')
+      .update({
+        kind: input.kind,
+        person: input.person.trim(),
+        amount,
+        due_date: input.dueDate,
+        note: input.note ?? '',
+        status,
+      })
+      .eq('id', id)
+      .select('*')
+      .single();
+
+    if (error) {
+      return this.failure(error.message);
+    }
+
+    return { data: this.mapDebt(data as DebtRow), error: null };
+  }
+
   async updateDebtPayment(id: string, paidAmount: number, status: DebtStatus): Promise<ServiceResponse<DebtEntry>> {
     const { data, error } = await this.supabase
       .from('debts')
@@ -443,6 +583,16 @@ export class SupabaseService {
     }
 
     return { data: this.mapDebt(data as DebtRow), error: null };
+  }
+
+  async deleteDebt(id: string): Promise<ServiceResponse<null>> {
+    const { error } = await this.supabase.from('debts').delete().eq('id', id);
+
+    if (error) {
+      return this.failure(error.message);
+    }
+
+    return { data: null, error: null };
   }
 
   emptyData(): FinmateData {

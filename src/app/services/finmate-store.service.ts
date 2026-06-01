@@ -118,6 +118,12 @@ export interface CreateAccountInput {
   initialBalance: unknown;
 }
 
+export interface UpdateAccountInput {
+  name: string;
+  type: AccountType;
+  balance: unknown;
+}
+
 export interface CreateTransactionInput {
   type: Exclude<TransactionType, 'transfer'>;
   accountId: string;
@@ -206,6 +212,12 @@ export interface ImportResult {
 
 export interface GenerateRecurringResult {
   created: Transaction[];
+}
+
+interface PreparedCsvRecord {
+  line: number;
+  record: Record<string, string>;
+  type: TransactionType;
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -363,6 +375,65 @@ export class FinmateStoreService {
     return this.ok('Account berhasil dibuat.', this.clone(account));
   }
 
+  updateAccount(id: string, input: UpdateAccountInput): ActionResult<Account> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const account = data.accounts.find((item) => item.id === id);
+    if (!account) {
+      return this.fail('Account tidak ditemukan.');
+    }
+
+    const name = input.name.trim();
+    const balance = this.readAmount(input.balance, false);
+
+    if (!name) {
+      return this.fail('Account name wajib diisi.');
+    }
+
+    if (balance === null) {
+      return this.fail('Balance wajib berupa angka.');
+    }
+
+    if (balance < 0) {
+      return this.fail('Balance tidak boleh negatif.');
+    }
+
+    if (data.accounts.some((item) => item.id !== id && item.name.toLowerCase() === name.toLowerCase())) {
+      return this.fail('Account name sudah digunakan.');
+    }
+
+    account.name = name;
+    account.type = input.type;
+    account.balance = balance;
+    this.save();
+
+    return this.ok('Account berhasil diperbarui.', this.clone(account));
+  }
+
+  deleteAccount(id: string): ActionResult<Account> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const accountIndex = data.accounts.findIndex((item) => item.id === id);
+    if (accountIndex < 0) {
+      return this.fail('Account tidak ditemukan.');
+    }
+
+    if (this.isAccountInUse(data, id)) {
+      return this.fail('Account masih digunakan oleh transaksi atau recurring transaction.');
+    }
+
+    const [deleted] = data.accounts.splice(accountIndex, 1);
+    this.save();
+
+    return this.ok('Account berhasil dihapus.', this.clone(deleted));
+  }
+
   addTransaction(input: CreateTransactionInput): ActionResult<Transaction> {
     const data = this.requireData();
     if (!data) {
@@ -476,6 +547,147 @@ export class FinmateStoreService {
     return this.ok('Transfer berhasil dicatat.', this.clone(transaction));
   }
 
+  updateTransaction(id: string, input: CreateTransactionInput): ActionResult<Transaction> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const original = data.transactions.find((transaction) => transaction.id === id);
+    if (!original || original.type === 'transfer') {
+      return this.fail('Transaksi tidak ditemukan.');
+    }
+
+    const amount = this.readAmount(input.amount, true);
+    const account = data.accounts.find((item) => item.id === input.accountId);
+    const category = input.category.trim();
+
+    if (!account) {
+      return this.fail(input.type === 'income' ? 'Akun tujuan wajib dipilih.' : 'Akun sumber wajib dipilih.');
+    }
+
+    if (!category) {
+      return this.fail('Kategori wajib dipilih.');
+    }
+
+    if (amount === null || amount <= 0) {
+      return this.fail('Nominal transaksi harus lebih dari 0.');
+    }
+
+    if (!input.date) {
+      return this.fail('Tanggal transaksi wajib diisi.');
+    }
+
+    const replacement: Transaction = {
+      id: original.id,
+      type: input.type,
+      accountId: account.id,
+      category,
+      amount,
+      date: input.date,
+      note: input.note ?? '',
+      recurringId: original.recurringId,
+      createdAt: original.createdAt,
+    };
+    const balanceError = this.applyTransactionBalanceChange(data, original, replacement);
+    if (balanceError) {
+      return this.fail(balanceError);
+    }
+
+    Object.assign(original, replacement);
+    this.save();
+
+    const warnings = input.type === 'expense' ? this.getBudgetWarnings(data, category, input.date) : [];
+    return this.ok('Transaksi berhasil diperbarui.', this.clone(original), warnings);
+  }
+
+  updateTransfer(id: string, input: TransferInput): ActionResult<Transaction> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const original = data.transactions.find((transaction) => transaction.id === id);
+    if (!original || original.type !== 'transfer') {
+      return this.fail('Transfer tidak ditemukan.');
+    }
+
+    const amount = this.readAmount(input.amount, true);
+    const fee = this.readAmount(input.fee, false) ?? 0;
+    const fromAccount = data.accounts.find((account) => account.id === input.fromAccountId);
+    const toAccount = data.accounts.find((account) => account.id === input.toAccountId);
+
+    if (!fromAccount) {
+      return this.fail('Akun sumber wajib dipilih.');
+    }
+
+    if (!toAccount) {
+      return this.fail('Akun tujuan wajib dipilih.');
+    }
+
+    if (fromAccount.id === toAccount.id) {
+      return this.fail('Akun sumber dan tujuan tidak boleh sama.');
+    }
+
+    if (amount === null || amount <= 0) {
+      return this.fail('Nominal transfer harus lebih dari 0.');
+    }
+
+    if (fee < 0) {
+      return this.fail('Biaya admin tidak boleh negatif.');
+    }
+
+    if (!input.date) {
+      return this.fail('Tanggal transfer wajib diisi.');
+    }
+
+    const replacement: Transaction = {
+      id: original.id,
+      type: 'transfer',
+      fromAccountId: fromAccount.id,
+      toAccountId: toAccount.id,
+      category: 'Transfer',
+      amount,
+      fee,
+      date: input.date,
+      note: input.note ?? '',
+      recurringId: original.recurringId,
+      createdAt: original.createdAt,
+    };
+    const balanceError = this.applyTransactionBalanceChange(data, original, replacement);
+    if (balanceError) {
+      return this.fail(balanceError);
+    }
+
+    Object.assign(original, replacement);
+    this.save();
+
+    return this.ok('Transfer berhasil diperbarui.', this.clone(original));
+  }
+
+  deleteTransaction(id: string): ActionResult<Transaction> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const transactionIndex = data.transactions.findIndex((transaction) => transaction.id === id);
+    if (transactionIndex < 0) {
+      return this.fail('Transaksi tidak ditemukan.');
+    }
+
+    const transaction = data.transactions[transactionIndex];
+    const balanceError = this.applyTransactionBalanceChange(data, transaction, null);
+    if (balanceError) {
+      return this.fail(balanceError);
+    }
+
+    data.transactions.splice(transactionIndex, 1);
+    this.save();
+
+    return this.ok('Transaksi berhasil dihapus.', this.clone(transaction));
+  }
+
   setBudget(input: CreateBudgetInput): ActionResult<Budget> {
     const data = this.requireData();
     if (!data) {
@@ -515,6 +727,61 @@ export class FinmateStoreService {
     this.save();
 
     return this.ok('Budget berhasil disimpan.', this.clone(budget));
+  }
+
+  updateBudget(id: string, input: CreateBudgetInput): ActionResult<Budget> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const budget = data.budgets.find((item) => item.id === id);
+    if (!budget) {
+      return this.fail('Budget tidak ditemukan.');
+    }
+
+    const category = input.category.trim();
+    const limit = this.readAmount(input.limit, true);
+
+    if (!category) {
+      return this.fail('Kategori budget wajib dipilih.');
+    }
+
+    if (!/^\d{4}-\d{2}$/.test(input.month)) {
+      return this.fail('Periode budget wajib dipilih.');
+    }
+
+    if (limit === null || limit <= 0) {
+      return this.fail('Budget harus lebih dari 0.');
+    }
+
+    if (data.budgets.some((item) => item.id !== id && item.category === category && item.month === input.month)) {
+      return this.fail('Budget untuk kategori dan bulan tersebut sudah ada.');
+    }
+
+    budget.category = category;
+    budget.month = input.month;
+    budget.limit = limit;
+    this.save();
+
+    return this.ok('Budget berhasil diperbarui.', this.clone(budget));
+  }
+
+  deleteBudget(id: string): ActionResult<Budget> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const budgetIndex = data.budgets.findIndex((item) => item.id === id);
+    if (budgetIndex < 0) {
+      return this.fail('Budget tidak ditemukan.');
+    }
+
+    const [deleted] = data.budgets.splice(budgetIndex, 1);
+    this.save();
+
+    return this.ok('Budget berhasil dihapus.', this.clone(deleted));
   }
 
   getBudgetSummaries(month: string): BudgetSummary[] {
@@ -606,6 +873,88 @@ export class FinmateStoreService {
     return this.ok('Recurring transaction berhasil dibuat.', this.clone(rule));
   }
 
+  updateRecurring(id: string, input: CreateRecurringInput): ActionResult<RecurringRule> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const rule = data.recurringRules.find((item) => item.id === id);
+    if (!rule) {
+      return this.fail('Recurring tidak ditemukan.');
+    }
+
+    const name = input.name.trim();
+    const amount = this.readAmount(input.amount, true);
+    const dayOfMonth = Number(input.dayOfMonth);
+    const account = data.accounts.find((item) => item.id === input.accountId);
+    const category = input.category.trim();
+
+    if (!name) {
+      return this.fail('Nama recurring wajib diisi.');
+    }
+
+    if (!account) {
+      return this.fail('Akun recurring wajib dipilih.');
+    }
+
+    if (!category) {
+      return this.fail('Kategori recurring wajib dipilih.');
+    }
+
+    if (amount === null || amount <= 0) {
+      return this.fail('Nominal recurring harus lebih dari 0.');
+    }
+
+    if (!Number.isInteger(dayOfMonth) || dayOfMonth < 1 || dayOfMonth > 31) {
+      return this.fail('Tanggal recurring harus di antara 1 sampai 31.');
+    }
+
+    if (!input.startsOn) {
+      return this.fail('Tanggal mulai recurring wajib diisi.');
+    }
+
+    if (input.endsOn && input.endsOn < input.startsOn) {
+      return this.fail('Tanggal selesai tidak boleh sebelum tanggal mulai.');
+    }
+
+    rule.name = name;
+    rule.type = input.type;
+    rule.accountId = account.id;
+    rule.category = category;
+    rule.amount = amount;
+    rule.dayOfMonth = dayOfMonth;
+    rule.startsOn = input.startsOn;
+    rule.endsOn = input.endsOn || undefined;
+    rule.active = input.active;
+    this.save();
+
+    return this.ok('Recurring transaction berhasil diperbarui.', this.clone(rule));
+  }
+
+  deleteRecurring(id: string): ActionResult<RecurringRule> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const ruleIndex = data.recurringRules.findIndex((item) => item.id === id);
+    if (ruleIndex < 0) {
+      return this.fail('Recurring tidak ditemukan.');
+    }
+
+    for (const transaction of data.transactions) {
+      if (transaction.recurringId === id) {
+        transaction.recurringId = undefined;
+      }
+    }
+
+    const [deleted] = data.recurringRules.splice(ruleIndex, 1);
+    this.save();
+
+    return this.ok('Recurring transaction berhasil dihapus.', this.clone(deleted));
+  }
+
   toggleRecurring(id: string, active: boolean): ActionResult<RecurringRule> {
     const data = this.requireData();
     if (!data) {
@@ -632,12 +981,21 @@ export class FinmateStoreService {
     const created: Transaction[] = [];
     const warnings: string[] = [];
 
-    for (const rule of data.recurringRules) {
-      if (!this.isRecurringDue(rule, date)) {
-        continue;
+    const dueItems: Array<{ dueDate: string; rule: RecurringRule; ruleIndex: number }> = [];
+    data.recurringRules.forEach((rule, ruleIndex) => {
+      for (const dueDate of this.getRecurringDueDates(rule, date)) {
+        dueItems.push({ dueDate, rule, ruleIndex });
       }
+    });
+    dueItems.sort(
+      (first, second) =>
+        first.dueDate.localeCompare(second.dueDate) ||
+        this.recurringTypeWeight(first.rule) - this.recurringTypeWeight(second.rule) ||
+        first.ruleIndex - second.ruleIndex
+    );
 
-      const duplicate = data.transactions.some((transaction) => transaction.recurringId === rule.id && transaction.date === date);
+    for (const { dueDate, rule } of dueItems) {
+      const duplicate = data.transactions.some((transaction) => transaction.recurringId === rule.id && transaction.date === dueDate);
       if (duplicate) {
         continue;
       }
@@ -658,7 +1016,7 @@ export class FinmateStoreService {
         accountId: account.id,
         category: rule.category,
         amount: rule.amount,
-        date,
+        date: dueDate,
         note: `Auto: ${rule.name}`,
         recurringId: rule.id,
       });
@@ -669,7 +1027,7 @@ export class FinmateStoreService {
         account.balance = this.toMoney(account.balance - rule.amount);
       }
 
-      rule.lastGeneratedOn = date;
+      rule.lastGeneratedOn = dueDate;
       data.transactions.unshift(transaction);
       created.push(transaction);
     }
@@ -717,7 +1075,65 @@ export class FinmateStoreService {
     return this.ok(input.kind === 'debt' ? 'Hutang berhasil dicatat.' : 'Piutang berhasil dicatat.', this.clone(entry));
   }
 
-  recordDebtPayment(id: string, value: unknown): ActionResult<DebtEntry> {
+  updateDebt(id: string, input: CreateDebtInput): ActionResult<DebtEntry> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const entry = data.debts.find((item) => item.id === id);
+    if (!entry) {
+      return this.fail('Data hutang/piutang tidak ditemukan.');
+    }
+
+    const person = input.person.trim();
+    const amount = this.readAmount(input.amount, true);
+
+    if (!person) {
+      return this.fail('Nama orang wajib diisi.');
+    }
+
+    if (amount === null || amount <= 0) {
+      return this.fail('Nominal hutang/piutang harus lebih dari 0.');
+    }
+
+    if (amount < entry.paidAmount) {
+      return this.fail('Nominal tidak boleh lebih kecil dari nominal yang sudah dibayar/diterima.');
+    }
+
+    if (!input.dueDate) {
+      return this.fail('Tanggal jatuh tempo wajib diisi.');
+    }
+
+    entry.kind = input.kind;
+    entry.person = person;
+    entry.amount = amount;
+    entry.dueDate = input.dueDate;
+    entry.note = input.note ?? '';
+    entry.status = this.resolveDebtStatus(entry.amount, entry.paidAmount, entry.dueDate);
+    this.save();
+
+    return this.ok('Data hutang/piutang berhasil diperbarui.', this.clone(entry));
+  }
+
+  deleteDebt(id: string): ActionResult<DebtEntry> {
+    const data = this.requireData();
+    if (!data) {
+      return this.fail('Silakan login terlebih dahulu.');
+    }
+
+    const index = data.debts.findIndex((item) => item.id === id);
+    if (index < 0) {
+      return this.fail('Data hutang/piutang tidak ditemukan.');
+    }
+
+    const [deleted] = data.debts.splice(index, 1);
+    this.save();
+
+    return this.ok('Data hutang/piutang berhasil dihapus.', this.clone(deleted));
+  }
+
+  recordDebtPayment(id: string, value: unknown, accountId?: string): ActionResult<DebtEntry> {
     const data = this.requireData();
     if (!data) {
       return this.fail('Silakan login terlebih dahulu.');
@@ -725,9 +1141,14 @@ export class FinmateStoreService {
 
     const payment = this.readAmount(value, true);
     const entry = data.debts.find((item) => item.id === id);
+    const account = accountId ? data.accounts.find((item) => item.id === accountId) : undefined;
 
     if (!entry) {
       return this.fail('Data hutang/piutang tidak ditemukan.');
+    }
+
+    if (accountId && !account) {
+      return this.fail('Akun pembayaran wajib dipilih.');
     }
 
     if (payment === null || payment <= 0) {
@@ -737,6 +1158,14 @@ export class FinmateStoreService {
     const remaining = this.toMoney(entry.amount - entry.paidAmount);
     if (payment > remaining) {
       return this.fail('Pembayaran melebihi sisa nominal.');
+    }
+
+    if (account) {
+      if (entry.kind === 'debt' && account.balance < payment) {
+        return this.fail('Saldo akun tidak mencukupi untuk membayar hutang.');
+      }
+
+      account.balance = this.toMoney(entry.kind === 'debt' ? account.balance - payment : account.balance + payment);
     }
 
     entry.paidAmount = this.toMoney(entry.paidAmount + payment);
@@ -863,26 +1292,55 @@ export class FinmateStoreService {
     let skipped = 0;
     const errors: string[] = [];
     const fingerprints = new Set(data.transactions.map((transaction) => this.transactionFingerprint(transaction)));
+    const preparedRecords: PreparedCsvRecord[] = [];
 
     for (const [index, row] of rows.slice(1).entries()) {
       const line = index + 2;
       const record = this.rowToRecord(headers, row);
       const type = record['type']?.trim().toLowerCase() ?? '';
-      const date = record['date']?.trim() ?? '';
-      const category = record['category']?.trim() ?? '';
-      const amount = record['amount']?.trim() ?? '';
-      const fee = record['fee']?.trim() ?? '0';
-      const note = record['note']?.trim() ?? '';
 
       if (!['income', 'expense', 'transfer'].includes(type)) {
         errors.push(`Baris ${line}: type tidak valid.`);
         continue;
       }
 
-      if (!date || Number.isNaN(Date.parse(date))) {
+      const normalizedDate = this.normalizeCsvDate(record['date'] ?? '');
+      if (!normalizedDate) {
         errors.push(`Baris ${line}: tanggal tidak valid.`);
         continue;
       }
+
+      record['date'] = normalizedDate;
+
+      if (type === 'transfer') {
+        if (!(record['fromAccount'] ?? '').trim()) {
+          errors.push(`Baris ${line}: fromAccount wajib diisi untuk transfer.`);
+          continue;
+        }
+
+        if (!(record['toAccount'] ?? '').trim()) {
+          errors.push(`Baris ${line}: toAccount wajib diisi untuk transfer.`);
+          continue;
+        }
+      } else if (!(record['account'] ?? '').trim()) {
+        errors.push(`Baris ${line}: account wajib diisi.`);
+        continue;
+      }
+
+      preparedRecords.push({ line, record, type: type as TransactionType });
+    }
+
+    const ensuredAccounts = this.ensureCsvImportAccounts(preparedRecords);
+    if (!ensuredAccounts.ok) {
+      errors.push(ensuredAccounts.message);
+    }
+
+    for (const { line, record, type } of preparedRecords) {
+      const category = record['category']?.trim() ?? '';
+      const amount = record['amount']?.trim() ?? '';
+      const fee = record['fee']?.trim() ?? '0';
+      const note = record['note']?.trim() ?? '';
+      const date = record['date']?.trim() ?? '';
 
       const candidateFingerprint = this.csvFingerprint(record);
       if (fingerprints.has(candidateFingerprint)) {
@@ -923,7 +1381,122 @@ export class FinmateStoreService {
     }
 
     const message = errors.length > 0 ? 'Import selesai dengan beberapa error.' : 'Import CSV berhasil.';
-    return this.ok(message, { imported, skipped, errors }, errors);
+    const warnings = [...(ensuredAccounts.warnings ?? []), ...errors];
+    return this.ok(message, { imported, skipped, errors }, warnings);
+  }
+
+  private ensureCsvImportAccounts(records: PreparedCsvRecord[]): ActionResult<string[]> {
+    const accountNames = this.collectCsvAccountNames(records);
+    if (accountNames.length === 0) {
+      return this.ok('Tidak ada akun baru dari CSV.', []);
+    }
+
+    const openingBalances = this.calculateCsvOpeningBalances(records);
+    const createdAccounts: string[] = [];
+
+    for (const accountName of accountNames) {
+      if (this.findAccountByName(accountName)) {
+        continue;
+      }
+
+      const initialBalance = openingBalances.get(this.csvAccountKey(accountName)) ?? 0;
+      const account = this.addAccount({
+        name: accountName,
+        type: this.inferCsvAccountType(accountName),
+        initialBalance,
+      });
+
+      if (!account.ok || !account.data) {
+        return this.fail(`Gagal membuat akun ${accountName}: ${account.message}`);
+      }
+
+      createdAccounts.push(initialBalance > 0 ? `${accountName} (Rp ${initialBalance.toLocaleString('id-ID')})` : accountName);
+    }
+
+    const warnings =
+      createdAccounts.length > 0
+        ? [`Akun dibuat otomatis dari CSV: ${createdAccounts.join(', ')}. Saldo dalam tanda kurung adalah saldo pembuka agar histori transaksi bisa diimpor.`]
+        : [];
+    return this.ok('Akun CSV siap dipakai.', createdAccounts, warnings);
+  }
+
+  private collectCsvAccountNames(records: PreparedCsvRecord[]): string[] {
+    const names = new Map<string, string>();
+    const remember = (name: string): void => {
+      const normalized = name.trim();
+      if (normalized) {
+        names.set(this.csvAccountKey(normalized), normalized);
+      }
+    };
+
+    for (const { record, type } of records) {
+      if (type === 'transfer') {
+        remember(record['fromAccount'] ?? '');
+        remember(record['toAccount'] ?? '');
+      } else {
+        remember(record['account'] ?? '');
+      }
+    }
+
+    return [...names.values()];
+  }
+
+  private calculateCsvOpeningBalances(records: PreparedCsvRecord[]): Map<string, number> {
+    const openingBalances = new Map<string, number>();
+    const runningBalances = new Map<string, number>();
+
+    const applyDelta = (name: string, delta: number): void => {
+      const key = this.csvAccountKey(name);
+      if (!runningBalances.has(key)) {
+        runningBalances.set(key, this.findAccountByName(name)?.balance ?? 0);
+        openingBalances.set(key, 0);
+      }
+
+      const nextBalance = this.toMoney((runningBalances.get(key) ?? 0) + delta);
+      if (nextBalance >= 0) {
+        runningBalances.set(key, nextBalance);
+        return;
+      }
+
+      openingBalances.set(key, this.toMoney((openingBalances.get(key) ?? 0) - nextBalance));
+      runningBalances.set(key, 0);
+    };
+
+    for (const { record, type } of records) {
+      const amount = this.readAmount(record['amount'], true);
+      const fee = this.readAmount(record['fee'] ?? 0, false) ?? 0;
+      if (amount === null || amount <= 0 || fee < 0) {
+        continue;
+      }
+
+      if (type === 'income') {
+        applyDelta(record['account'] ?? '', amount);
+      } else if (type === 'expense') {
+        applyDelta(record['account'] ?? '', -amount);
+      } else {
+        applyDelta(record['fromAccount'] ?? '', -this.toMoney(amount + fee));
+        applyDelta(record['toAccount'] ?? '', amount);
+      }
+    }
+
+    return openingBalances;
+  }
+
+  private inferCsvAccountType(name: string): AccountType {
+    const normalized = name.trim().toLowerCase();
+    if (['cash', 'tunai'].includes(normalized)) {
+      return 'Cash';
+    }
+
+    if (['dana', 'ovo', 'gopay', 'shopeepay', 'linkaja'].includes(normalized)) {
+      return 'E-Wallet';
+    }
+
+    return 'Bank';
+  }
+
+  private csvAccountKey(name: string): string {
+    return name.trim().toLowerCase();
   }
 
   resetForTesting(seed = false): void {
@@ -1034,22 +1607,41 @@ export class FinmateStoreService {
     return 'safe';
   }
 
-  private isRecurringDue(rule: RecurringRule, date: string): boolean {
-    if (!rule.active) {
-      return false;
+  private getRecurringDueDates(rule: RecurringRule, untilDate: string): string[] {
+    if (!rule.active || untilDate < rule.startsOn) {
+      return [];
     }
 
-    if (date < rule.startsOn) {
-      return false;
+    const endDate = rule.endsOn && rule.endsOn < untilDate ? rule.endsOn : untilDate;
+    const [startYear, startMonth] = rule.startsOn.split('-').map(Number);
+    const [endYear, endMonth] = endDate.split('-').map(Number);
+    const dueDates: string[] = [];
+    let year = startYear;
+    let month = startMonth;
+
+    while (year < endYear || (year === endYear && month <= endMonth)) {
+      const dueDate = this.monthlyRecurringDate(year, month, rule.dayOfMonth);
+      if (dueDate >= rule.startsOn && dueDate <= endDate) {
+        dueDates.push(dueDate);
+      }
+
+      month += 1;
+      if (month > 12) {
+        month = 1;
+        year += 1;
+      }
     }
 
-    if (rule.endsOn && date > rule.endsOn) {
-      return false;
-    }
+    return dueDates;
+  }
 
-    const [year, month, day] = date.split('-').map(Number);
-    const dueDay = Math.min(rule.dayOfMonth, daysInMonth(year, month));
-    return day === dueDay;
+  private monthlyRecurringDate(year: number, month: number, dayOfMonth: number): string {
+    const dueDay = Math.min(dayOfMonth, daysInMonth(year, month));
+    return `${year}-${padDatePart(month)}-${padDatePart(dueDay)}`;
+  }
+
+  private recurringTypeWeight(rule: RecurringRule): number {
+    return rule.type === 'income' ? 0 : 1;
   }
 
   private findAccountByName(name: string): Account | undefined {
@@ -1059,6 +1651,74 @@ export class FinmateStoreService {
     }
 
     return data.accounts.find((account) => account.name.toLowerCase() === name.trim().toLowerCase());
+  }
+
+  private isAccountInUse(data: FinmateData, accountId: string): boolean {
+    return (
+      data.transactions.some(
+        (transaction) =>
+          transaction.accountId === accountId || transaction.fromAccountId === accountId || transaction.toAccountId === accountId
+      ) || data.recurringRules.some((rule) => rule.accountId === accountId)
+    );
+  }
+
+  private applyTransactionBalanceChange(
+    data: FinmateData,
+    original: Transaction,
+    replacement: Transaction | Omit<Transaction, 'id' | 'createdAt'> | null
+  ): string | null {
+    const nextBalances = new Map(data.accounts.map((account) => [account.id, account.balance]));
+    const affectedAccountIds = new Set<string>();
+
+    const applyEffect = (transaction: Transaction | Omit<Transaction, 'id' | 'createdAt'>, multiplier: number): string | null => {
+      const applyDelta = (accountId: string | undefined, delta: number): string | null => {
+        if (!accountId || !nextBalances.has(accountId)) {
+          return 'Akun pada transaksi tidak ditemukan.';
+        }
+
+        affectedAccountIds.add(accountId);
+        nextBalances.set(accountId, this.toMoney((nextBalances.get(accountId) ?? 0) + delta));
+        return null;
+      };
+
+      if (transaction.type === 'income') {
+        return applyDelta(transaction.accountId, transaction.amount * multiplier);
+      }
+
+      if (transaction.type === 'expense') {
+        return applyDelta(transaction.accountId, -transaction.amount * multiplier);
+      }
+
+      const debit = this.toMoney(transaction.amount + (transaction.fee ?? 0));
+      return applyDelta(transaction.fromAccountId, -debit * multiplier) ?? applyDelta(transaction.toAccountId, transaction.amount * multiplier);
+    };
+
+    const reverseError = applyEffect(original, -1);
+    if (reverseError) {
+      return reverseError;
+    }
+
+    if (replacement) {
+      const applyError = applyEffect(replacement, 1);
+      if (applyError) {
+        return applyError;
+      }
+    }
+
+    for (const accountId of affectedAccountIds) {
+      if ((nextBalances.get(accountId) ?? 0) < 0) {
+        return 'Saldo akun tidak mencukupi untuk perubahan transaksi ini.';
+      }
+    }
+
+    for (const account of data.accounts) {
+      const nextBalance = nextBalances.get(account.id);
+      if (nextBalance !== undefined) {
+        account.balance = nextBalance;
+      }
+    }
+
+    return null;
   }
 
   private accountName(id: string): string {
@@ -1100,6 +1760,30 @@ export class FinmateStoreService {
       record[header] = row[index] ?? '';
       return record;
     }, {});
+  }
+
+  private normalizeCsvDate(value: string): string | null {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return trimmed;
+    }
+
+    const slashDate = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (slashDate) {
+      const [, month, day, year] = slashDate;
+      return `${year}-${padDatePart(Number(month))}-${padDatePart(Number(day))}`;
+    }
+
+    const parsed = new Date(trimmed);
+    if (Number.isNaN(parsed.getTime())) {
+      return null;
+    }
+
+    return parsed.toISOString().slice(0, 10);
   }
 
   private parseCsv(text: string): string[][] {
@@ -1227,6 +1911,10 @@ export function todayIso(): string {
 
 function daysInMonth(year: number, month: number): number {
   return new Date(year, month, 0).getDate();
+}
+
+function padDatePart(value: number): string {
+  return String(value).padStart(2, '0');
 }
 
 function createSeedState(): FinmateState {

@@ -123,9 +123,12 @@
         </section>
 
         <section *ngSwitchCase="'accounts'" class="content-grid two-columns">
-          <form class="panel" (ngSubmit)="addAccount()">
+          <form class="panel" (ngSubmit)="saveAccount()">
             <div class="panel-heading">
-              <h2>Tambah Akun</h2>
+              <h2>{{ editingAccountId ? 'Edit Akun' : 'Tambah Akun' }}</h2>
+              <ion-button *ngIf="editingAccountId" size="small" fill="clear" type="button" (click)="cancelEditAccount()" aria-label="Batalkan edit akun">
+                <ion-icon slot="icon-only" name="close-outline"></ion-icon>
+              </ion-button>
             </div>
             <ion-list lines="full">
               <ion-item>
@@ -139,13 +142,13 @@
                 </ion-select>
               </ion-item>
               <ion-item>
-                <ion-label position="stacked">Initial balance</ion-label>
+                <ion-label position="stacked">{{ editingAccountId ? 'Balance' : 'Initial balance' }}</ion-label>
                 <ion-input name="initialBalance" type="number" inputmode="decimal" [(ngModel)]="accountForm.initialBalance"></ion-input>
               </ion-item>
             </ion-list>
             <ion-button expand="block" type="submit">
               <ion-icon slot="start" name="save-outline"></ion-icon>
-              Simpan Akun
+              {{ editingAccountId ? 'Update Akun' : 'Simpan Akun' }}
             </ion-button>
           </form>
 
@@ -160,7 +163,15 @@
                   <h3>{{ account.name }}</h3>
                   <p>{{ account.type }}</p>
                 </ion-label>
-                <ion-text slot="end">{{ formatCurrency(account.balance) }}</ion-text>
+                <div class="account-actions" slot="end">
+                  <ion-text>{{ formatCurrency(account.balance) }}</ion-text>
+                  <ion-button size="small" fill="clear" type="button" (click)="startEditAccount(account)" aria-label="Edit akun">
+                    <ion-icon slot="icon-only" name="create-outline"></ion-icon>
+                  </ion-button>
+                  <ion-button size="small" fill="clear" color="danger" type="button" (click)="deleteAccount(account)" aria-label="Hapus akun">
+                    <ion-icon slot="icon-only" name="trash-outline"></ion-icon>
+                  </ion-button>
+                </div>
               </ion-item>
             </ion-list>
           </section>
@@ -169,7 +180,10 @@
         <section *ngSwitchCase="'transactions'" class="content-grid two-columns">
           <form class="panel" (ngSubmit)="addTransaction()">
             <div class="panel-heading">
-              <h2>Income / Expense</h2>
+              <h2>{{ editingTransactionId ? 'Edit Income / Expense' : 'Income / Expense' }}</h2>
+              <ion-button *ngIf="editingTransactionId" size="small" fill="clear" type="button" (click)="cancelTransactionEdit()" aria-label="Batalkan edit transaksi">
+                <ion-icon slot="icon-only" name="close-outline"></ion-icon>
+              </ion-button>
             </div>
             <ion-list lines="full">
               <ion-item>
@@ -207,14 +221,17 @@
               </ion-item>
             </ion-list>
             <ion-button expand="block" type="submit">
-              <ion-icon slot="start" name="add-circle-outline"></ion-icon>
-              Tambah Transaksi
+              <ion-icon slot="start" [name]="editingTransactionId ? 'save-outline' : 'add-circle-outline'"></ion-icon>
+              {{ editingTransactionId ? 'Update Transaksi' : 'Tambah Transaksi' }}
             </ion-button>
           </form>
 
           <form class="panel" (ngSubmit)="transfer()">
             <div class="panel-heading">
-              <h2>Transfer Antar Akun</h2>
+              <h2>{{ editingTransferId ? 'Edit Transfer' : 'Transfer Antar Akun' }}</h2>
+              <ion-button *ngIf="editingTransferId" size="small" fill="clear" type="button" (click)="cancelTransferEdit()" aria-label="Batalkan edit transfer">
+                <ion-icon slot="icon-only" name="close-outline"></ion-icon>
+              </ion-button>
             </div>
             <ion-list lines="full">
               <ion-item>
@@ -247,8 +264,8 @@
               </ion-item>
             </ion-list>
             <ion-button expand="block" type="submit" color="tertiary">
-              <ion-icon slot="start" name="swap-horizontal-outline"></ion-icon>
-              Catat Transfer
+              <ion-icon slot="start" [name]="editingTransferId ? 'save-outline' : 'swap-horizontal-outline'"></ion-icon>
+              {{ editingTransferId ? 'Update Transfer' : 'Catat Transfer' }}
             </ion-button>
           </form>
 
@@ -262,9 +279,17 @@
                   <h3>{{ transactionTitle(transaction) }}</h3>
                   <p>{{ transaction.type }} - {{ transaction.category }} - {{ transaction.date }}</p>
                 </ion-label>
-                <ion-text slot="end" [color]="transaction.type === 'income' ? 'success' : 'danger'">
-                  {{ transactionAmount(transaction) }}
-                </ion-text>
+                <div class="transaction-actions" slot="end">
+                  <ion-text [color]="transaction.type === 'income' ? 'success' : 'danger'">
+                    {{ transactionAmount(transaction) }}
+                  </ion-text>
+                  <ion-button size="small" fill="clear" type="button" (click)="startEditTransaction(transaction)" aria-label="Edit transaksi">
+                    <ion-icon slot="icon-only" name="create-outline"></ion-icon>
+                  </ion-button>
+                  <ion-button size="small" fill="clear" color="danger" type="button" (click)="deleteTransaction(transaction)" aria-label="Hapus transaksi">
+                    <ion-icon slot="icon-only" name="trash-outline"></ion-icon>
+                  </ion-button>
+                </div>
               </ion-item>
             </ion-list>
           </section>
@@ -273,7 +298,10 @@
         <section *ngSwitchCase="'budget'" class="content-grid two-columns">
           <form class="panel" (ngSubmit)="saveBudget()">
             <div class="panel-heading">
-              <h2>Budget Kategori</h2>
+              <h2>{{ editingBudgetId ? 'Edit Budget' : 'Budget Kategori' }}</h2>
+              <ion-button *ngIf="editingBudgetId" size="small" fill="clear" type="button" (click)="cancelBudgetEdit()" aria-label="Batalkan edit budget">
+                <ion-icon slot="icon-only" name="close-outline"></ion-icon>
+              </ion-button>
             </div>
             <ion-list lines="full">
               <ion-item>
@@ -292,8 +320,8 @@
               </ion-item>
             </ion-list>
             <ion-button expand="block" type="submit">
-              <ion-icon slot="start" name="speedometer-outline"></ion-icon>
-              Simpan Budget
+              <ion-icon slot="start" [name]="editingBudgetId ? 'save-outline' : 'speedometer-outline'"></ion-icon>
+              {{ editingBudgetId ? 'Update Budget' : 'Simpan Budget' }}
             </ion-button>
           </form>
 
@@ -303,9 +331,19 @@
             </div>
             <div class="budget-list" *ngIf="budgetSummaries.length > 0; else noBudgets">
               <article class="budget-row" *ngFor="let summary of budgetSummaries; trackBy: trackById">
-                <div>
-                  <strong>{{ summary.category }}</strong>
-                  <span>{{ budgetStatusLabel(summary) }}</span>
+                <div class="budget-row-heading">
+                  <div class="budget-title">
+                    <strong>{{ summary.category }}</strong>
+                    <span>{{ budgetStatusLabel(summary) }}</span>
+                  </div>
+                  <div class="budget-actions">
+                    <ion-button size="small" fill="clear" type="button" (click)="startEditBudget(summary)" aria-label="Edit budget">
+                      <ion-icon slot="icon-only" name="create-outline"></ion-icon>
+                    </ion-button>
+                    <ion-button size="small" fill="clear" color="danger" type="button" (click)="deleteBudget(summary)" aria-label="Hapus budget">
+                      <ion-icon slot="icon-only" name="trash-outline"></ion-icon>
+                    </ion-button>
+                  </div>
                 </div>
                 <ion-progress-bar [value]="summary.percentage > 100 ? 1 : summary.percentage / 100" [color]="budgetColor(summary.status)"></ion-progress-bar>
                 <small>Sisa {{ formatCurrency(summary.remaining) }}</small>
@@ -315,10 +353,20 @@
         </section>
 
         <section *ngSwitchCase="'recurring'" class="content-grid two-columns">
-          <form class="panel" (ngSubmit)="addRecurring()">
+          <form class="panel" (ngSubmit)="saveRecurring()">
             <div class="panel-heading">
-              <h2>Recurring Transaction</h2>
-              <ion-button size="small" fill="clear" type="button" (click)="generateRecurringToday()">
+              <h2>{{ editingRecurringId ? 'Edit Recurring' : 'Recurring Transaction' }}</h2>
+              <ion-button *ngIf="editingRecurringId" size="small" fill="clear" type="button" (click)="cancelRecurringEdit()" aria-label="Batalkan edit recurring">
+                <ion-icon slot="icon-only" name="close-outline"></ion-icon>
+              </ion-button>
+              <ion-button
+                size="small"
+                fill="clear"
+                type="button"
+                (click)="generateRecurringToday()"
+                aria-label="Proses recurring jatuh tempo sampai hari ini"
+                title="Proses recurring jatuh tempo sampai hari ini"
+              >
                 <ion-icon slot="icon-only" name="play-forward-outline"></ion-icon>
               </ion-button>
             </div>
@@ -369,8 +417,8 @@
               </ion-item>
             </ion-list>
             <ion-button expand="block" type="submit">
-              <ion-icon slot="start" name="repeat-outline"></ion-icon>
-              Simpan Recurring
+              <ion-icon slot="start" [name]="editingRecurringId ? 'save-outline' : 'repeat-outline'"></ion-icon>
+              {{ editingRecurringId ? 'Update Recurring' : 'Simpan Recurring' }}
             </ion-button>
           </form>
 
@@ -384,21 +432,36 @@
                   <h3>{{ rule.name }}</h3>
                   <p>{{ recurringAccount(rule) }} - {{ rule.category }} - tanggal {{ rule.dayOfMonth }}</p>
                 </ion-label>
-                <ion-text slot="end">{{ formatCurrency(rule.amount) }}</ion-text>
-
-                <ion-button slot="end" size="small" fill="clear" color="primary" (click)="payRecurring(rule)" [disabled]="!rule.active" title="Bayar Sekarang">
-                  <ion-icon slot="icon-only" name="cash-outline"></ion-icon>
-                </ion-button>
-                <ion-toggle slot="end" [checked]="rule.active" (ionChange)="toggleRecurring(rule.id, $any($event).detail.checked)"></ion-toggle>
+                <div class="recurring-actions" slot="end">
+                  <ion-text>{{ formatCurrency(rule.amount) }}</ion-text>
+                  <ion-button size="small" fill="clear" color="primary" type="button" (click)="payRecurring(rule)" [disabled]="!rule.active" aria-label="Bayar recurring sekarang" title="Bayar Sekarang">
+                    <ion-icon slot="icon-only" name="cash-outline"></ion-icon>
+                  </ion-button>
+                  <ion-toggle
+                    [checked]="rule.active"
+                    (ionChange)="toggleRecurring(rule.id, $any($event).detail.checked)"
+                    aria-label="Aktifkan atau nonaktifkan auto debet recurring"
+                    title="Auto debet aktif/nonaktif"
+                  ></ion-toggle>
+                  <ion-button size="small" fill="clear" type="button" (click)="startEditRecurring(rule)" aria-label="Edit recurring">
+                    <ion-icon slot="icon-only" name="create-outline"></ion-icon>
+                  </ion-button>
+                  <ion-button size="small" fill="clear" color="danger" type="button" (click)="deleteRecurring(rule)" aria-label="Hapus recurring">
+                    <ion-icon slot="icon-only" name="trash-outline"></ion-icon>
+                  </ion-button>
+                </div>
               </ion-item>
             </ion-list>
           </section>
         </section>
 
         <section *ngSwitchCase="'debts'" class="content-grid two-columns">
-          <form class="panel" (ngSubmit)="addDebt()">
+          <form class="panel" (ngSubmit)="saveDebt()">
             <div class="panel-heading">
-              <h2>Hutang / Piutang</h2>
+              <h2>{{ editingDebtId ? 'Edit Hutang / Piutang' : 'Hutang / Piutang' }}</h2>
+              <ion-button *ngIf="editingDebtId" size="small" fill="clear" type="button" (click)="cancelDebtEdit()" aria-label="Batalkan edit hutang piutang">
+                <ion-icon slot="icon-only" name="close-outline"></ion-icon>
+              </ion-button>
             </div>
             <ion-list lines="full">
               <ion-item>
@@ -426,8 +489,8 @@
               </ion-item>
             </ion-list>
             <ion-button expand="block" type="submit">
-              <ion-icon slot="start" name="receipt-outline"></ion-icon>
-              Simpan Data
+              <ion-icon slot="start" [name]="editingDebtId ? 'save-outline' : 'receipt-outline'"></ion-icon>
+              {{ editingDebtId ? 'Update Data' : 'Simpan Data' }}
             </ion-button>
           </form>
 
@@ -438,17 +501,42 @@
             <ion-list lines="full" *ngIf="data.debts.length > 0; else noDebts">
               <ion-item *ngFor="let debt of data.debts; trackBy: trackById" class="debt-item">
                 <ion-label>
-                  <h3>{{ debt.person }}</h3>
-                  <p>{{ debt.kind === 'debt' ? 'Hutang' : 'Piutang' }} - {{ debt.dueDate }} - {{ debtLabel(debt) }}</p>
+                  <div class="debt-title-row">
+                    <h3>{{ debt.person }}</h3>
+                    <ion-badge [color]="debtColor(debt)">{{ debtLabel(debt) }}</ion-badge>
+                  </div>
+                  <p>{{ debt.kind === 'debt' ? 'Hutang' : 'Piutang' }} - {{ debt.dueDate }}</p>
+                  <small class="debt-note">Catatan: {{ debt.note || '-' }}</small>
                   <small>{{ formatCurrency(debt.paidAmount) }} / {{ formatCurrency(debt.amount) }}</small>
                   <div class="payment-row" *ngIf="debt.status !== 'paid'">
-                    <ion-input type="number" inputmode="decimal" [(ngModel)]="paymentForms[debt.id]" name="payment-{{ debt.id }}" placeholder="Bayar"></ion-input>
+                    <ion-input
+                      type="number"
+                      inputmode="decimal"
+                      [(ngModel)]="paymentForms[debt.id]"
+                      name="payment-{{ debt.id }}"
+                      [placeholder]="debt.kind === 'debt' ? 'Bayar' : 'Terima'"
+                    ></ion-input>
+                    <ion-select
+                      interface="popover"
+                      [(ngModel)]="paymentAccountForms[debt.id]"
+                      name="paymentAccount-{{ debt.id }}"
+                      [placeholder]="debt.kind === 'debt' ? 'Akun bayar' : 'Akun terima'"
+                    >
+                      <ion-select-option *ngFor="let account of data.accounts" [value]="account.id">{{ account.name }}</ion-select-option>
+                    </ion-select>
                     <ion-button size="small" (click)="payDebt(debt.id)">
                       <ion-icon slot="icon-only" name="checkmark-outline"></ion-icon>
                     </ion-button>
                   </div>
                 </ion-label>
-                <ion-badge slot="end" [color]="debtColor(debt)">{{ debtLabel(debt) }}</ion-badge>
+                <div class="debt-actions" slot="end">
+                  <ion-button size="small" fill="clear" type="button" (click)="startEditDebt(debt)" aria-label="Edit hutang piutang">
+                    <ion-icon slot="icon-only" name="create-outline"></ion-icon>
+                  </ion-button>
+                  <ion-button size="small" fill="clear" color="danger" type="button" (click)="deleteDebt(debt)" aria-label="Hapus hutang piutang">
+                    <ion-icon slot="icon-only" name="trash-outline"></ion-icon>
+                  </ion-button>
+                </div>
               </ion-item>
             </ion-list>
           </section>
@@ -547,9 +635,9 @@
             </div>
             <ion-button expand="block" (click)="exportCsv()">
               <ion-icon slot="start" name="download-outline"></ion-icon>
-              Export Transaksi
+              Export Semua Data
             </ion-button>
-            <p class="muted">Format: type,date,account,fromAccount,toAccount,category,amount,fee,note</p>
+            <p class="muted">Backup berisi akun, transaksi, budget, langganan, hutang/piutang. Laporan dihitung ulang dari data tersebut.</p>
           </section>
 
           <section class="panel">
